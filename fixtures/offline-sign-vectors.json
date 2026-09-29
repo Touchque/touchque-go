@@ -68,7 +68,7 @@
     "note": "usr is lower-cased inside the message; step = floor(unixSeconds / 30)."
   },
   "challenge": {
-    "qr": "TQ2.k1.oKGio6SlpqeoqaqrTLiAjNjJ3kPK9zYvMJtFv24hO-_MCtH27vZBpr0WnEJGjF2fNJ43CoTLxuoXvmWSJwx7K8pZ3iyzPfJuCQOplZ9G4ivjBDSg8Vb69h9-rQpEYQjDwzP5ONUWmX2CBFVWPv4TMYw9hEPWt85CCX_fgZCnQVeg8l1x-cpz4PeAuzdcpy94Di2AzOtg8wzV9X0U02rUbaWIH6jyrJg03uF3S32IZLt0Iw2nksXXHqoQHe3NH6nw8jJ1-jIgJVSJAFixM7-t_VqAeCWN7cvSArhfezFIKqs8FZzXNVyzmA2630sQngmQyvEECxqIbzj7BE6awkx_sZ-XJZ2D-D94UgX0f9WvLsANzQxpfDJe23mAvPePlM8ENNsOFyY1UPGjYV12qNwhzNLMw5JHlqYZCyzrZEfBZ6t9ZonA8lMLBa30ti3j8b6toxbR1x9hopoolizo-72FFxDUyRkLxJFVD6lGvHpOHupCSSg9wnjM-u4C6x3PYihDTXk0cp6wwaS-0-VgKBAdqvmKVCv2NTBonEpmJRiCTX8SS8TwX6yqTlKsRkhezxz4n1jbfZC3M-5CYfL7ryf66-p4EMaIxPcSXa5eiSKBNwpg",
+    "qr": "TQ2.k1.oKGio6SlpqeoqaqrTLiAjNjJ3kPK9zYvMJtFv24hO-_MCtH27vZBpr0WnEJGjF2fNJ43CoTLxuoXvmWSJwx7K8pZ3iyzPfJuCQOplZ9G4ivjBDSg8Vb69h9-rQpEYQjDwzP5ONUWmX2CBFVWPv4TMYw9hEPWt85CCX_fgZCnQVeg8l1x-cpz4PeAuzdcpy94Di2AzOtg8wzV9X0U02rUbaWIH6jyrJg03uF3S32IZLt0Iw2nksXXHqoQHe3NH6nw8jJ1-jIgJVSJAFixM7-t_VqAeCWN7cvSArhfezFIKqs8FZzXNVyzmA2630sQngmQyvEECxqIbzj7BE6awkx_sZ-XJZ2D-D94UgX0f9WvLsANzQxpfDJe23mAvPePlM8ENNsOFyY1UPGjYV12qNwhzNLMw5JHlqYZCyzrZEfBZ6t9ZonA8lMLBa30ti3j8b6toxbR1x9hopoolizo-72FFxDUyRkLxJFVD6lGvHpOHupCSSs4wHjO4e8d7ATVZjgcHHd4PoaooqS61edWDgcZj_2gXjnIFjht7TVtFk2MQzQaXpLoVKqkR1KsRkhezwD22EXTL4i8NeBLYfL7riT4pts_T-tPp2U0scTEqlrygkU",
     "deviceSecret": "9f2c6d1e4b7a83c05d19e6f2a4b8c7d3e1f0a5b6c9d2e4f7a1b3c5d7e9f0a2b4",
     "qrAccount": {
       "iid": "6b8e3069-4716-4392-a6ce-08288bbb3380",
@@ -115,7 +115,7 @@
       "iat": 1790000000,
       "exp": 1790000120
     },
-    "tamperedQr": "TQ2.k1.oKGio6SlpqeoqaqrTLiAANjJ3kPK9zYvMJtFv24hO-_MCtH27vZBpr0WnEJGjF2fNJ43CoTLxuoXvmWSJwx7K8pZ3iyzPfJuCQOplZ9G4ivjBDSg8Vb69h9-rQpEYQjDwzP5ONUWmX2CBFVWPv4TMYw9hEPWt85CCX_fgZCnQVeg8l1x-cpz4PeAuzdcpy94Di2AzOtg8wzV9X0U02rUbaWIH6jyrJg03uF3S32IZLt0Iw2nksXXHqoQHe3NH6nw8jJ1-jIgJVSJAFixM7-t_VqAeCWN7cvSArhfezFIKqs8FZzXNVyzmA2630sQngmQyvEECxqIbzj7BE6awkx_sZ-XJZ2D-D94UgX0f9WvLsANzQxpfDJe23mAvPePlM8ENNsOFyY1UPGjYV12qNwhzNLMw5JHlqYZCyzrZEfBZ6t9ZonA8lMLBa30ti3j8b6toxbR1x9hopoolizo-72FFxDUyRkLxJFVD6lGvHpOHupCSSg9wnjM-u4C6x3PYihDTXk0cp6wwaS-0-VgKBAdqvmKVCv2NTBonEpmJRiCTX8SS8TwX6yqTlKsRkhezxz4n1jbfZC3M-5CYfL7ryf66-p4EMaIxPcSXa5eiSKBNwpg",
+    "tamperedQr": "TQ2.k1.oKGio6SlpqeoqaqrTLiAANjJ3kPK9zYvMJtFv24hO-_MCtH27vZBpr0WnEJGjF2fNJ43CoTLxuoXvmWSJwx7K8pZ3iyzPfJuCQOplZ9G4ivjBDSg8Vb69h9-rQpEYQjDwzP5ONUWmX2CBFVWPv4TMYw9hEPWt85CCX_fgZCnQVeg8l1x-cpz4PeAuzdcpy94Di2AzOtg8wzV9X0U02rUbaWIH6jyrJg03uF3S32IZLt0Iw2nksXXHqoQHe3NH6nw8jJ1-jIgJVSJAFixM7-t_VqAeCWN7cvSArhfezFIKqs8FZzXNVyzmA2630sQngmQyvEECxqIbzj7BE6awkx_sZ-XJZ2D-D94UgX0f9WvLsANzQxpfDJe23mAvPePlM8ENNsOFyY1UPGjYV12qNwhzNLMw5JHlqYZCyzrZEfBZ6t9ZonA8lMLBa30ti3j8b6toxbR1x9hopoolizo-72FFxDUyRkLxJFVD6lGvHpOHupCSSs4wHjO4e8d7ATVZjgcHHd4PoaooqS61edWDgcZj_2gXjnIFjht7TVtFk2MQzQaXpLoVKqkR1KsRkhezwD22EXTL4i8NeBLYfL7riT4pts_T-tPp2U0scTEqlrygkU",
     "note": "TQ2.<kid>.<base64url(iv12 || ciphertext || tag16)>; AES-256-GCM, associated data = \"TQ2|<kid>\", plaintext = the JSON body. The phone tries the QR key of every account it holds (device secret + that account integration id and user name) and the account whose key opens it shows the details, right after scanning (no Face ID); Face ID is asked only when the user approves, to derive K for the code."
   },
   "normalize": [

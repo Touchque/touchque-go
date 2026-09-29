@@ -17,7 +17,7 @@ import (
 
 func readFixture(t *testing.T, name string, out interface{}) {
 	t.Helper()
-	p := filepath.Join("..", "..", "fixtures", name)
+	p := filepath.Join("..", "fixtures", name)
 	b, err := os.ReadFile(p)
 	if err != nil {
 		t.Fatalf("read %s: %v", p, err)
@@ -89,13 +89,10 @@ func TestWebhookVectors(t *testing.T) {
 			if hex.EncodeToString(mac.Sum(nil)) != v.ExpectedSignature {
 				t.Fatal("webhook signature mismatch")
 			}
-			// Verify accepts the delivered body (fixtures carry a fixed past
-			// timestamp, so only assert it does not fail on signature).
-			if _, verr := w.Verify(v.DeliveredBody, ""); verr != nil {
-				if _, ok := verr.(*WebhookSignatureError); ok &&
-					verr.Error() != "Webhook timestamp is outside the allowed window" {
-					t.Fatalf("Verify rejected a valid fixture: %v", verr)
-				}
+			// Verify accepts the delivered body. Fixtures carry a fixed past
+			// (or no) timestamp, so the freshness check is switched off here.
+			if _, verr := w.Verify(v.DeliveredBody, "", 0); verr != nil {
+				t.Fatalf("Verify rejected a valid fixture: %v", verr)
 			}
 		})
 	}

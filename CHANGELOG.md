@@ -7,6 +7,20 @@ Go modules are versioned via git tags (e.g. `touchque-go/v1.1.0`), not a
 manifest field — the version below corresponds to the tag this SDK should
 be released under next.
 
+## [3.0.0] — 2026-09-29
+
+### Changed
+- **Breaking:** the module path is now `github.com/Touchque/touchque-go/v3`, as Go
+  requires for v2+ releases. Update imports to
+  `github.com/Touchque/touchque-go/v3/touchque`.
+
+### Security
+- `Webhook.Verify` rejects a webhook whose signed `timestamp` is missing or
+  unparseable (previously the freshness check was silently skipped).
+- New `Webhook.VerifyWithOptions` with a `ReplayCache` (`NewMemoryReplayCache()`
+  or your own `WebhookReplayCache` over Redis/DB): a second delivery of the
+  same `jti` returns `*WebhookReplayError` — answer 200 to it, it is a duplicate.
+
 ## [2.0.0] — 2026-09-28
 
 ### Added

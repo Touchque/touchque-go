@@ -4,7 +4,7 @@ The official Go server SDK for [TouchQue](https://touchque.com) — biometric pu
 2FA, passkeys, and offline approval codes, added to any `net/http` backend
 with one middleware wrap per route.
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/Touchque/touchque-go.svg)](https://pkg.go.dev/github.com/Touchque/touchque-go)
+[![Go Reference](https://pkg.go.dev/badge/github.com/Touchque/touchque-go/v3.svg)](https://pkg.go.dev/github.com/Touchque/touchque-go/v3)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 📘 Full docs: **[authenticator.touchque.com/docs](https://authenticator.touchque.com/docs)**
@@ -12,7 +12,7 @@ with one middleware wrap per route.
 ## Install
 
 ```bash
-go get github.com/Touchque/touchque-go
+go get github.com/Touchque/touchque-go/v3
 ```
 
 ## Setup
@@ -30,7 +30,7 @@ left empty.
 ## Quick start (net/http)
 
 ```go
-import "github.com/Touchque/touchque-go/touchque"
+import "github.com/Touchque/touchque-go/v3/touchque"
 
 tq := touchque.NewClient(touchque.Config{})
 

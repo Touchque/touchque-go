@@ -154,7 +154,7 @@ func TestWebhook_PreservesNestedObjectKeyOrderAndNumbers(t *testing.T) {
 		`"requestId":"req_1","riskScore":0.25,"status":"SUCCESS"}`
 	rawBody := serverWebhookRaw(t, canonical, testWebhookSecret)
 
-	payload, err := w.Verify(rawBody, "")
+	payload, err := w.Verify(rawBody, "", 0) // hand-written body has no timestamp
 	if err != nil {
 		t.Fatalf("nested-object callback failed verification (canonicalize must not sort nested keys): %v", err)
 	}
@@ -169,8 +169,8 @@ func TestWebhook_PreservesHighPrecisionNumbers(t *testing.T) {
 	// A number that float64 re-serialization would reformat (e.g. to 1.23e8).
 	canonical := `{"event":"txn","ledgerBalance":123456789.123456789,"requestId":"req_9"}`
 	rawBody := serverWebhookRaw(t, canonical, testWebhookSecret)
-
-	if _, err := w.Verify(rawBody, ""); err != nil {
+	// The hand-written body has no timestamp, so the freshness check is off.
+	if _, err := w.Verify(rawBody, "", 0); err != nil {
 		t.Fatalf("high-precision number reformatted by canonicalize: %v", err)
 	}
 }
@@ -185,5 +185,74 @@ func TestWebhook_ErrorDoesNotLeakExpectedSignature(t *testing.T) {
 	}
 	if bytes.Contains([]byte(err.Error()), []byte("Expected")) {
 		t.Fatalf("error message leaks signing detail: %q", err.Error())
+	}
+}
+
+func TestWebhook_RejectsMissingOrInvalidTimestamp(t *testing.T) {
+	w := newTestWebhook(t)
+	for _, ts := range []interface{}{nil, "not-a-date"} {
+		payload := freshPayload()
+		if ts == nil {
+			delete(payload, "timestamp")
+		} else {
+			payload["timestamp"] = ts
+		}
+		if _, err := w.Verify(serverWebhook(t, payload, testWebhookSecret), ""); err == nil {
+			t.Fatalf("timestamp %v: expected an error, the freshness check must fail closed", ts)
+		}
+	}
+}
+
+func TestWebhook_ReplayCacheRejectsSecondDeliveryOfSameJTI(t *testing.T) {
+	w := newTestWebhook(t)
+	cache := NewMemoryReplayCache()
+	rawBody := serverWebhook(t, freshPayload(), testWebhookSecret)
+	opts := WebhookVerifyOptions{ReplayCache: cache}
+
+	if _, err := w.VerifyWithOptions(rawBody, "", opts); err != nil {
+		t.Fatalf("first delivery: %v", err)
+	}
+	_, err := w.VerifyWithOptions(rawBody, "", opts)
+	replay, ok := err.(*WebhookReplayError)
+	if !ok || replay.JTI != "jti_1" {
+		t.Fatalf("second delivery: want *WebhookReplayError for jti_1, got %v", err)
+	}
+
+	other := freshPayload()
+	other["jti"] = "jti_2"
+	if _, err := w.VerifyWithOptions(serverWebhook(t, other, testWebhookSecret), "", opts); err != nil {
+		t.Fatalf("different jti: %v", err)
+	}
+	noJTI := freshPayload()
+	delete(noJTI, "jti")
+	if _, err := w.VerifyWithOptions(serverWebhook(t, noJTI, testWebhookSecret), "", opts); err == nil {
+		t.Fatal("missing jti with a replay cache must be rejected")
+	}
+}
+
+func TestWebhook_ForgedWebhookDoesNotPoisonReplayCache(t *testing.T) {
+	w := newTestWebhook(t)
+	cache := NewMemoryReplayCache()
+	opts := WebhookVerifyOptions{ReplayCache: cache}
+	forged := serverWebhook(t, freshPayload(), "wrong-secret")
+	if _, err := w.VerifyWithOptions(forged, "", opts); err == nil {
+		t.Fatal("forged webhook accepted")
+	}
+	if _, err := w.VerifyWithOptions(serverWebhook(t, freshPayload(), testWebhookSecret), "", opts); err != nil {
+		t.Fatalf("genuine webhook after a forged one: %v", err)
+	}
+}
+
+func TestMemoryReplayCache_ExpiresEntries(t *testing.T) {
+	c := NewMemoryReplayCache()
+	if !c.CheckAndSet("x", time.Millisecond) {
+		t.Fatal("first set must succeed")
+	}
+	time.Sleep(5 * time.Millisecond)
+	if !c.CheckAndSet("x", time.Minute) {
+		t.Fatal("expired entry must be accepted again")
+	}
+	if c.CheckAndSet("x", time.Minute) {
+		t.Fatal("live entry must be rejected")
 	}
 }

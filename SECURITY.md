@@ -19,7 +19,7 @@ warrants sooner. We'll credit you in the release notes unless you ask us not to.
 
 ## Scope
 
-In scope: this package (github.com/Touchque/touchque-go) and its published releases. Signature
+In scope: this package (github.com/Touchque/touchque-go/v3) and its published releases. Signature
 verification, secret handling, the guard token, and the framework adapters
 are all fair game.
 

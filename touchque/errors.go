@@ -68,6 +68,16 @@ func (e *WebhookSignatureError) Error() string {
 	return e.Message
 }
 
+// WebhookReplayError means a correctly signed webhook with this `jti` was
+// already accepted (see WebhookResource.VerifyWithOptions).
+type WebhookReplayError struct {
+	JTI string
+}
+
+func (e *WebhookReplayError) Error() string {
+	return "Webhook was already accepted (replayed jti)"
+}
+
 // PasskeyRequiredError means a phishing-resistant policy requires this
 // request to be approved with a passkey — no push was sent.
 type PasskeyRequiredError struct {

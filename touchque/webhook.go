@@ -8,12 +8,65 @@ import (
 	"encoding/json"
 	"math"
 	"sort"
+	"sync"
 	"time"
 )
 
 // defaultWebhookToleranceSeconds is the replay window: a callback whose
 // signed `timestamp` is further than this from now is rejected.
 const defaultWebhookToleranceSeconds = 300
+
+// WebhookReplayCache stores webhook `jti`s already accepted. CheckAndSet must
+// atomically record jti for ttl and return true if it was NOT seen before.
+// Use NewMemoryReplayCache for a single process, or implement it over Redis /
+// your database when you run several instances.
+type WebhookReplayCache interface {
+	CheckAndSet(jti string, ttl time.Duration) bool
+}
+
+// MemoryReplayCache is an in-process WebhookReplayCache. Entries expire after
+// their TTL and the map is capped. Safe for concurrent use.
+type MemoryReplayCache struct {
+	mu         sync.Mutex
+	seen       map[string]time.Time
+	maxEntries int
+}
+
+// NewMemoryReplayCache returns an in-process replay cache.
+func NewMemoryReplayCache() *MemoryReplayCache {
+	return &MemoryReplayCache{seen: make(map[string]time.Time), maxEntries: 100000}
+}
+
+// CheckAndSet implements WebhookReplayCache.
+func (c *MemoryReplayCache) CheckAndSet(jti string, ttl time.Duration) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	if exp, ok := c.seen[jti]; ok && exp.After(now) {
+		return false
+	}
+	if len(c.seen) >= c.maxEntries {
+		for k, exp := range c.seen {
+			if !exp.After(now) || len(c.seen) >= c.maxEntries {
+				delete(c.seen, k)
+			}
+			if len(c.seen) < c.maxEntries*9/10 {
+				break
+			}
+		}
+	}
+	c.seen[jti] = now.Add(ttl)
+	return true
+}
+
+// WebhookVerifyOptions tunes VerifyWithOptions.
+type WebhookVerifyOptions struct {
+	// ToleranceSeconds is the freshness window; nil means 300, 0 disables it.
+	ToleranceSeconds *int
+	// ReplayCache, when set, rejects a second delivery of the same `jti` with
+	// a *WebhookReplayError.
+	ReplayCache WebhookReplayCache
+}
 
 // WebhookResource handles incoming webhook signature verification.
 type WebhookResource struct {
@@ -86,9 +139,21 @@ func canonicalize(rawBody []byte) (string, error) {
 // An optional toleranceSeconds overrides the 300s replay window (parity with
 // the Node/PHP/Python SDKs); pass 0 to disable the freshness check.
 func (w *WebhookResource) Verify(rawBody string, signature string, toleranceSeconds ...int) (map[string]interface{}, error) {
-	tolerance := defaultWebhookToleranceSeconds
+	opts := WebhookVerifyOptions{}
 	if len(toleranceSeconds) > 0 {
-		tolerance = toleranceSeconds[0]
+		opts.ToleranceSeconds = &toleranceSeconds[0]
+	}
+	return w.VerifyWithOptions(rawBody, signature, opts)
+}
+
+// VerifyWithOptions is Verify with a replay cache. A correctly signed
+// delivery whose `jti` was already accepted returns *WebhookReplayError
+// (usually a TouchQue retry of something you processed: answer 200, but don't
+// run your side effects again).
+func (w *WebhookResource) VerifyWithOptions(rawBody string, signature string, opts WebhookVerifyOptions) (map[string]interface{}, error) {
+	tolerance := defaultWebhookToleranceSeconds
+	if opts.ToleranceSeconds != nil {
+		tolerance = *opts.ToleranceSeconds
 	}
 	var payload map[string]interface{}
 	if err := json.Unmarshal([]byte(rawBody), &payload); err != nil {
@@ -120,13 +185,32 @@ func (w *WebhookResource) Verify(rawBody string, signature string, toleranceSeco
 		return nil, &WebhookSignatureError{Message: "Invalid webhook signature"}
 	}
 
+	// TouchQue always signs a timestamp, so a missing or unparseable one fails
+	// closed instead of skipping the freshness check.
 	if tolerance > 0 {
-		if ts, ok := payload["timestamp"].(string); ok {
-			if parsed, perr := time.Parse(time.RFC3339, ts); perr == nil {
-				if math.Abs(time.Since(parsed).Seconds()) > float64(tolerance) {
-					return nil, &WebhookSignatureError{Message: "Webhook timestamp is outside the allowed window"}
-				}
-			}
+		ts, _ := payload["timestamp"].(string)
+		parsed, perr := time.Parse(time.RFC3339, ts)
+		if perr != nil {
+			return nil, &WebhookSignatureError{Message: "Webhook timestamp is missing or invalid"}
+		}
+		if math.Abs(time.Since(parsed).Seconds()) > float64(tolerance) {
+			return nil, &WebhookSignatureError{Message: "Webhook timestamp is outside the allowed window"}
+		}
+	}
+
+	if opts.ReplayCache != nil {
+		jti, _ := payload["jti"].(string)
+		if jti == "" {
+			return nil, &WebhookSignatureError{Message: "Webhook jti is missing"}
+		}
+		// Remember it for twice the window so it outlives any timestamp that
+		// could still pass the freshness check.
+		ttl := time.Duration(tolerance*2) * time.Second
+		if ttl < 10*time.Minute {
+			ttl = 10 * time.Minute
+		}
+		if !opts.ReplayCache.CheckAndSet(jti, ttl) {
+			return nil, &WebhookReplayError{JTI: jti}
 		}
 	}
 
