@@ -90,19 +90,19 @@ for critical actions in the Dashboard's Security Policy.
 ## Offline sign
 
 ```go
-ch, _ := tq.Offline.Challenge(ctx, touchque.OfflineChallengeOptions{
-    User: "jane@acme.com", Type: "WITHDRAW",
+ch, _ := tq.Offline.Challenge(touchque.OfflineChallengeOptions{
+    ExternalUsername: "jane@acme.com", Type: "WITHDRAW",
     Details: []touchque.LoginDetail{{Label: "Amount", Value: "1,250.00 USD"}},
 })
 // show ch.QRDataURL — the phone scans it offline and shows a 7-character code
-result, _ := tq.Offline.Verify(ctx, ch.ChallengeID, code)
+result, _ := tq.Offline.Verify(ch.ChallengeID, code)
 ```
 
 **A QR that follows a push.** Set `RequestID` when the offline QR is the fallback for a push the user
 already started (the guard does this for you):
 
 ```go
-ch, _ := tq.Offline.Challenge(touchque.OfflineChallengeOptions{User: "jane@acme.com", Type: "LOGIN", RequestID: step.RequestID})
+ch, _ := tq.Offline.Challenge(touchque.OfflineChallengeOptions{ExternalUsername: "jane@acme.com", Type: "LOGIN", RequestID: step.RequestID})
 // ch.ChallengeCode is the number to print under the QR when number matching applies.
 ```
 
