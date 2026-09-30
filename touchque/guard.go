@@ -91,6 +91,9 @@ func runGuard(c *Client, in GuardInput) GuardResult {
 		if extra.Oc != "" {
 			claims.Oc = extra.Oc
 		}
+		if extra.Rid != "" {
+			claims.Rid = extra.Rid
+		}
 		claims.Exp = nowMs() + tokenTTLMs
 		return GuardResult{Status: guardStatus[step.State], Body: &GuardBody{Touchque: step, Token: signGuardToken(c.apiSecret, claims)}}
 	}
@@ -106,7 +109,7 @@ func runGuard(c *Client, in GuardInput) GuardResult {
 		var res *OfflineVerifyResult
 		var err error
 		if isTotp {
-			res, err = c.Offline.VerifyTotp(in.User, in.Code, in.Action, in.IP)
+			res, err = c.Offline.VerifyTotpFor(in.User, in.Code, in.Action, in.IP, bound.Rid)
 		} else {
 			res, err = c.Offline.Verify(bound.Oc, in.Code)
 		}
@@ -130,10 +133,14 @@ func runGuard(c *Client, in GuardInput) GuardResult {
 			}}
 		}
 		if res.Reason == "invalid_code" && !isTotp {
-			return issue(Step{State: StepOffline, Offline: &OfflineStep{ChallengeID: bound.Oc, AttemptsLeft: res.AttemptsLeft}}, guardClaims{Oc: bound.Oc})
+			return issue(Step{State: StepOffline, Offline: &OfflineStep{ChallengeID: bound.Oc, AttemptsLeft: res.AttemptsLeft}}, guardClaims{Oc: bound.Oc, Rid: bound.Rid, N: bound.N})
 		}
 		if res.Reason == "invalid_code" {
-			return issue(Step{State: StepOffline, Reason: "invalid_code"}, guardClaims{Oc: bound.Oc})
+			return issue(Step{State: StepOffline, Reason: "invalid_code"}, guardClaims{Oc: bound.Oc, Rid: bound.Rid, N: bound.N})
+		}
+		// The phone rejected the push this QR belongs to: the whole sign-in is over.
+		if res.Reason == "request_rejected" {
+			return issue(Step{State: StepRejected, RequestID: bound.Rid, Reason: "request_rejected"}, guardClaims{})
 		}
 		state := StepBlocked
 		if res.Reason == "expired" {
@@ -147,10 +154,19 @@ func runGuard(c *Client, in GuardInput) GuardResult {
 	}
 
 	if in.Offline {
+		// Link the QR to the push it follows: a phone-side rejection kills it, and a push that asked
+		// for number matching makes the QR ask for the same number.
+		rid := ""
+		if bound != nil {
+			rid = bound.Rid
+		}
 		ch, err := c.Offline.Challenge(OfflineChallengeOptions{
-			ExternalUsername: in.User, Type: in.Action, Details: norm, ClientIP: in.IP, UserAgent: in.UserAgent,
+			ExternalUsername: in.User, Type: in.Action, Details: norm, ClientIP: in.IP, UserAgent: in.UserAgent, RequestID: rid,
 		})
 		if err != nil {
+			if apiErr, ok := err.(*APIError); ok && apiErr.StatusCode == 409 && (apiErr.Code == "request_rejected" || dataError(apiErr) == "request_rejected") {
+				return issue(Step{State: StepRejected, RequestID: rid, Reason: "request_rejected"}, guardClaims{})
+			}
 			if apiErr, ok := err.(*APIError); ok && apiErr.StatusCode < 500 {
 				reason := apiErr.Code
 				if reason == "" {
@@ -163,13 +179,19 @@ func runGuard(c *Client, in GuardInput) GuardResult {
 			}
 			return errorResult(err)
 		}
+		n := ch.ChallengeCode
+		if n == "" && bound != nil {
+			n = bound.N
+		}
 		return issue(Step{State: StepOffline, Offline: &OfflineStep{
 			ChallengeID: ch.ChallengeID, QRDataURL: ch.QRDataURL, ExpiresAt: ch.ExpiresAt, TotpAvailable: ch.TotpAvailable,
-		}}, guardClaims{})
+			ChallengeCode: ch.ChallengeCode,
+		}}, guardClaims{Rid: rid, N: n})
 	}
 
-	// Waiting on a push / passkey: poll, and run the action once it is approved.
-	if bound != nil && bound.Rid != "" && (bound.St == string(StepWaiting) || bound.St == string(StepPasskeyRequired)) {
+	// Waiting on a push / passkey — or showing the offline QR next to a push that is still open: poll, and run
+	// the action once it is approved. While the QR is up a phone-side REJECT ends the attempt at once.
+	if bound != nil && bound.Rid != "" && (bound.St == string(StepWaiting) || bound.St == string(StepPasskeyRequired) || bound.St == string(StepOffline)) {
 		now, err := c.Check(bound.Rid)
 		if err != nil {
 			return errorResult(err)
@@ -187,6 +209,10 @@ func runGuard(c *Client, in GuardInput) GuardResult {
 				return errorResult(cerr)
 			}
 			return GuardResult{Status: 200, Approved: approval}
+		}
+		if bound.St == string(StepOffline) && (now.State == StepWaiting || now.State == StepExpired || now.State == StepPasskeyRequired) {
+			// Still (or no longer) pending: nothing changed for the user — keep showing the QR they have.
+			return issue(Step{State: StepOffline, Offline: &OfflineStep{ChallengeID: bound.Oc}}, guardClaims{Oc: bound.Oc, Rid: bound.Rid, N: bound.N})
 		}
 		if now.State == StepWaiting || now.State == StepPasskeyRequired {
 			return issue(Step{State: now.State, RequestID: bound.Rid, Number: bound.N}, guardClaims{N: bound.N})

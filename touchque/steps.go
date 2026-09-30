@@ -55,6 +55,9 @@ type OfflineStep struct {
 	ExpiresAt     string `json:"expiresAt,omitempty"`
 	TotpAvailable bool   `json:"totpAvailable,omitempty"`
 	AttemptsLeft  int    `json:"attemptsLeft,omitempty"`
+	// ChallengeCode is the number to print under the QR when number matching
+	// applies: the phone offers it among two decoys and the user taps the match.
+	ChallengeCode string `json:"challengeCode,omitempty"`
 }
 
 // Approval is a request that was approved and consumed exactly once.

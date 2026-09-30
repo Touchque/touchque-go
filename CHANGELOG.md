@@ -7,6 +7,22 @@ Go modules are versioned via git tags (e.g. `touchque-go/v1.1.0`), not a
 manifest field — the version below corresponds to the tag this SDK should
 be released under next.
 
+## [3.1.0] — 2026-09-30
+
+### Security
+- **A phone-side reject kills the offline QR.** `OfflineChallengeOptions.RequestID` and
+  `VerifyTotpFor(..., requestID)` tie the QR / time-based code to the push it follows. Once the phone REJECTS the push,
+  no new QR is issued for that sign-in (409 `request_rejected`) and no code — QR or time-based — finishes it
+  (`Reason == "request_rejected"`). The guard links the QR
+  automatically; while the QR is on screen the guard keeps checking the push, so the page learns about a reject
+  straight away (`StepRejected`) — and about an approval, which finishes the action without typing a code.
+
+### Added
+- **Number matching on the offline QR.** When the linked push (or `RequireNumberMatch: true`) uses number
+  matching, `Challenge()` returns `challengeCode` — print it under the QR. The phone shows it among two decoys
+  after scanning and the user taps the match; the phone is never told which is right, so a wrong tap yields a code
+  that fails verification. The guard's offline step carries it as `OfflineStep.ChallengeCode`.
+
 ## [3.0.0] — 2026-09-29
 
 ### Changed

@@ -98,6 +98,20 @@ ch, _ := tq.Offline.Challenge(ctx, touchque.OfflineChallengeOptions{
 result, _ := tq.Offline.Verify(ctx, ch.ChallengeID, code)
 ```
 
+**A QR that follows a push.** Set `RequestID` when the offline QR is the fallback for a push the user
+already started (the guard does this for you):
+
+```go
+ch, _ := tq.Offline.Challenge(touchque.OfflineChallengeOptions{User: "jane@acme.com", Type: "LOGIN", RequestID: step.RequestID})
+// ch.ChallengeCode is the number to print under the QR when number matching applies.
+```
+
+If the user **rejects the push on the phone, the offline QR dies with it**: no new QR is issued for that
+sign-in (409 `request_rejected`), a code for a QR already on screen is refused (`Reason == "request_rejected"`)
+and so is the time-based code (`VerifyTotpFor(..., requestID)`). With number matching, print `ChallengeCode`
+under the QR: the phone shows it among two decoys and the user taps the match; a wrong tap yields a code that
+fails verification.
+
 ## Webhooks
 
 ```go

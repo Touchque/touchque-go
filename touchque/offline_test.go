@@ -54,3 +54,41 @@ func TestOffline_VerifyPropagatesServerErrors(t *testing.T) {
 		t.Fatalf("expected *APIError, got %T", err)
 	}
 }
+
+func TestOffline_ChallengeLinksThePushAndReturnsTheNumber(t *testing.T) {
+	var seenBody map[string]interface{}
+	client, closeFn := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&seenBody)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"challengeId": "c1", "challengeCode": "47"})
+	})
+	defer closeFn()
+
+	ch, err := client.Offline.Challenge(OfflineChallengeOptions{ExternalUsername: "a@b.com", RequestID: "req-1", RequireNumberMatch: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if seenBody["requestId"] != "req-1" || seenBody["requireNumberMatch"] != true {
+		t.Fatalf("unexpected body: %+v", seenBody)
+	}
+	if ch.ChallengeCode != "47" {
+		t.Fatalf("expected the number, got %+v", ch)
+	}
+}
+
+func TestOffline_VerifyTotpForForwardsRequestIDAndARejectedRequestIsAResult(t *testing.T) {
+	var seenBody map[string]interface{}
+	client, closeFn := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&seenBody)
+		w.WriteHeader(410)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"approved": false, "reason": "request_rejected"})
+	})
+	defer closeFn()
+
+	res, err := client.Offline.VerifyTotpFor("a@b.com", "ABCDEFG", "LOGIN", "", "req-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if seenBody["requestId"] != "req-1" || res.Approved || res.Reason != "request_rejected" {
+		t.Fatalf("unexpected result: body=%+v res=%+v", seenBody, res)
+	}
+}

@@ -131,21 +131,29 @@ route('POST', '/action-types', (req, res, b) => {
   send(res, 200, { id: 'a1', type: b.type, name: b.name, description: b.description || '', critical: !!b.critical, active: true });
 });
 route('GET', '/action-types', (req, res) => send(res, 200, [...state.actions.entries()].map(([type, a]) => ({ type, ...a }))));
+// Like the real API: a QR that follows a push is tied to it. A request the phone REJECTED kills the QR
+// (none is issued, a code is refused), and a push with number matching makes the QR show the same number.
 route('POST', '/offline/challenge', (req, res, b) => {
   if (state.opts.offlineDisabled) return send(res, 403, { error: 'offline_sign_disabled', code: 'offline_sign_disabled' });
+  const linked = b.requestId ? state.requests.find((x) => x.id === b.requestId) : undefined;
+  if (b.requestId && !linked) return send(res, 404, { error: 'request_not_found' });
+  if (linked && linked.status === 'REJECTED') return send(res, 409, { error: 'request_rejected' });
   const id = `ch-${++state.seq}`;
-  state.challenges.set(id, { user: b.externalUsername, type: b.type, used: false });
-  send(res, 200, { challengeId: id, qr: 'TQ2.x', qrDataUrl: 'data:image/png;base64,OFFLINE', expiresAt: 'soon', expiresInSeconds: 120, totpAvailable: true });
+  state.challenges.set(id, { user: b.externalUsername, type: b.type, used: false, requestId: linked && linked.id });
+  const challengeCode = (linked && linked.challengeCode) || (b.requireNumberMatch === true ? '47' : undefined);
+  send(res, 200, { challengeId: id, qr: 'TQ2.x', qrDataUrl: 'data:image/png;base64,OFFLINE', expiresAt: 'soon', expiresInSeconds: 120, totpAvailable: true, ...(challengeCode ? { challengeCode } : {}) });
 });
 route('POST', '/offline/verify', (req, res, b) => {
   const ch = state.challenges.get(b.challengeId);
   if (!ch) return send(res, 404, { approved: false, reason: 'unknown_challenge' });
   if (ch.used) return send(res, 410, { approved: false, reason: 'used' });
+  if (ch.requestId && (state.requests.find((x) => x.id === ch.requestId) || {}).status === 'REJECTED') return send(res, 410, { approved: false, reason: 'request_rejected' });
   if (b.code !== 'ABCD123') return send(res, 401, { approved: false, reason: 'invalid_code', attemptsLeft: 4 });
   ch.used = true;
   send(res, 200, { approved: true, challengeId: b.challengeId, externalUsername: ch.user, type: ch.type });
 });
 route('POST', '/offline/totp/verify', (req, res, b) => {
+  if (b.requestId && (state.requests.find((x) => x.id === b.requestId) || {}).status === 'REJECTED') return send(res, 410, { approved: false, reason: 'request_rejected' });
   if (b.code !== '123456') return send(res, 401, { approved: false, reason: 'invalid_code' });
   send(res, 200, { approved: true, externalUsername: b.externalUsername });
 });

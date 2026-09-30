@@ -23,6 +23,14 @@ type OfflineChallengeOptions struct {
 	// SkipQRImage: set true to omit the ready-made QR image (QRDataURL comes
 	// back empty) when you only need the raw QR text.
 	SkipQRImage bool
+	// RequestID is the push this QR is a fallback for: once the phone REJECTS
+	// it the QR is dead (no new QR is issued, a code for the old one is refused
+	// with reason "request_rejected"), and a push with number matching makes the
+	// QR show the same number. Always set it when the QR follows a push.
+	RequestID string
+	// RequireNumberMatch asks for number matching on a standalone QR (implied
+	// when RequestID points at a push that has one).
+	RequireNumberMatch bool
 }
 
 // OfflineChallengeResponse is returned by Challenge.
@@ -39,6 +47,9 @@ type OfflineChallengeResponse struct {
 	// TotpAvailable is true when the workspace allows the time-based code
 	// fallback (no camera).
 	TotpAvailable bool `json:"totpAvailable"`
+	// ChallengeCode is the number to print under the QR (number matching).
+	// Empty when the QR needs no number matching.
+	ChallengeCode string `json:"challengeCode,omitempty"`
 }
 
 // Challenge issues an offline QR challenge.
@@ -63,6 +74,12 @@ func (o *OfflineResource) Challenge(opts OfflineChallengeOptions) (*OfflineChall
 	if opts.SkipQRImage {
 		body["includeQrImage"] = false
 	}
+	if opts.RequestID != "" {
+		body["requestId"] = opts.RequestID
+	}
+	if opts.RequireNumberMatch {
+		body["requireNumberMatch"] = true
+	}
 	res, err := o.http.post("/offline/challenge", body)
 	if err != nil {
 		return nil, err
@@ -86,12 +103,15 @@ func (o *OfflineResource) Challenge(opts OfflineChallengeOptions) (*OfflineChall
 	if v, ok := res["totpAvailable"].(bool); ok {
 		resp.TotpAvailable = v
 	}
+	if v, ok := res["challengeCode"].(string); ok {
+		resp.ChallengeCode = v
+	}
 	return resp, nil
 }
 
 // OfflineVerifyResult is common to Verify and VerifyTotp: never an error for
 // a wrong/expired/used code — check Approved. Reason is one of invalid_code |
-// locked | expired | used | unknown_challenge | too_many_failures |
+// locked | expired | used | unknown_challenge | request_rejected | too_many_failures |
 // device_not_enrolled.
 type OfflineVerifyResult struct {
 	Approved         bool   `json:"approved"`
@@ -112,12 +132,22 @@ func (o *OfflineResource) Verify(challengeID, code string) (*OfflineVerifyResult
 // VerifyTotp checks the rolling time-based code (no QR scan needed). Refused
 // for critical action types.
 func (o *OfflineResource) VerifyTotp(externalUsername, code, loginType, clientIP string) (*OfflineVerifyResult, error) {
+	return o.VerifyTotpFor(externalUsername, code, loginType, clientIP, "")
+}
+
+// VerifyTotpFor is VerifyTotp for a sign-in that started with a push: requestID
+// is that push, and a code is refused (reason "request_rejected") once the phone
+// rejected it.
+func (o *OfflineResource) VerifyTotpFor(externalUsername, code, loginType, clientIP, requestID string) (*OfflineVerifyResult, error) {
 	if loginType == "" {
 		loginType = "LOGIN"
 	}
 	body := map[string]interface{}{"externalUsername": externalUsername, "code": code, "type": loginType}
 	if clientIP != "" {
 		body["clientIp"] = clientIP
+	}
+	if requestID != "" {
+		body["requestId"] = requestID
 	}
 	return o.notApprovedAsResult(func() (map[string]interface{}, error) {
 		return o.http.post("/offline/totp/verify", body)

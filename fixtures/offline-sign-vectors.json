@@ -54,6 +54,52 @@
       },
       "expectedMessage": "touchque-offline:v1\n0b8f3f0e-6f0c-4a55-9d59-2f2d3c1b7a11\n6b8e3069-4716-4392-a6ce-08288bbb3380\nLOGIN\nAAECAwQFBgcICQoLDA0ODw\n1790000120\n",
       "expectedCode": "W4H8FAA"
+    },
+    {
+      "name": "numberMatchRight",
+      "fields": {
+        "cid": "0b8f3f0e-6f0c-4a55-9d59-2f2d3c1b7a11",
+        "iid": "6b8e3069-4716-4392-a6ce-08288bbb3380",
+        "type": "WITHDRAW",
+        "n": "AAECAwQFBgcICQoLDA0ODw",
+        "exp": 1790000120,
+        "details": [
+          {
+            "label": "Amount",
+            "value": "1,250.00 USD"
+          },
+          {
+            "label": "Recipient",
+            "value": "Jane Doe"
+          }
+        ],
+        "pick": "47"
+      },
+      "expectedMessage": "touchque-offline:v1\n0b8f3f0e-6f0c-4a55-9d59-2f2d3c1b7a11\n6b8e3069-4716-4392-a6ce-08288bbb3380\nWITHDRAW\nAAECAwQFBgcICQoLDA0ODw\n1790000120\n4d09a5ac01b443fffbfe91a648b4f1e9e2737f9908b0c305d3672c7cb8dfaa9d\nnm:47",
+      "expectedCode": "DSB5ZFB"
+    },
+    {
+      "name": "numberMatchWrong",
+      "fields": {
+        "cid": "0b8f3f0e-6f0c-4a55-9d59-2f2d3c1b7a11",
+        "iid": "6b8e3069-4716-4392-a6ce-08288bbb3380",
+        "type": "WITHDRAW",
+        "n": "AAECAwQFBgcICQoLDA0ODw",
+        "exp": 1790000120,
+        "details": [
+          {
+            "label": "Amount",
+            "value": "1,250.00 USD"
+          },
+          {
+            "label": "Recipient",
+            "value": "Jane Doe"
+          }
+        ],
+        "pick": "82"
+      },
+      "expectedMessage": "touchque-offline:v1\n0b8f3f0e-6f0c-4a55-9d59-2f2d3c1b7a11\n6b8e3069-4716-4392-a6ce-08288bbb3380\nWITHDRAW\nAAECAwQFBgcICQoLDA0ODw\n1790000120\n4d09a5ac01b443fffbfe91a648b4f1e9e2737f9908b0c305d3672c7cb8dfaa9d\nnm:82",
+      "expectedCode": "AQ3HDD4"
     }
   ],
   "totp": {
@@ -114,6 +160,45 @@
       "n": "AAECAwQFBgcICQoLDA0ODw",
       "iat": 1790000000,
       "exp": 1790000120
+    },
+    "numberMatch": {
+      "qr": "TQ2.k1.sLGys7S1tre4ubq7du9CDbN6dA-DDseN17GobWSTfv_Mver86nynBnxdzT71Q0SHsmmOpBb3IH-bC9B-paixdK2Wzw0VFDg44H3ase1Kn4_N6AZAgHCJHMi4rdQ-1Y3aOpAE-qCz6pkySIEeIMR3Kqo3-cYORoaZTKHuhMvePNs2YlfRab9n0yJUpcsY26w3yMH1DtuoT6nW6BUcuhWOP90JWUWyGJd61n6HM6vlapTkMnz3mjhnHrEXvLp72SvdOau8M2PfiXQN5a6MYiU7X_IprTZjK_TzQf14JXh9oW_RQB4h4pGNGqCfGj-T_GYrwNxwIKYCojy25N3nE2C2Fpb5H1oORtAmKmO309zi3ev4cEviCUhMeIpIqYsDBEwJSHz811EuXdiLXvk70UgGk7Dnr6MZZhkvFv0W3AAh6aqYQ7ShQaW3c4b10WFIPeNAQ-nr13FDI-1A10phZsenFxwLJP29r5QK4PdV2h88j9P_yauQcwIM9TKLHGJVDppJ-_A5RrqLJ9sPrZqS8j6-sm9JMYORfA0lyirAaST6wJ4aqnPJXryXO2kjpQIiPt78cCS5-vaAwc9HIv1zQaHGyfOMIVBbW7H_bkAazaA8TGUnhMYb84Vaay_f3P_i3mR855-nFTmC",
+      "expectedBody": {
+        "v": 2,
+        "cid": "0b8f3f0e-6f0c-4a55-9d59-2f2d3c1b7a11",
+        "kid": "k1",
+        "iid": "6b8e3069-4716-4392-a6ce-08288bbb3380",
+        "aud": "Demo Bank",
+        "usr": "jane@demobank.example",
+        "type": "WITHDRAW",
+        "tn": "Para çekme",
+        "crit": true,
+        "det": [
+          {
+            "label": "Amount",
+            "value": "1,250.00 USD"
+          },
+          {
+            "label": "Recipient",
+            "value": "Jane Doe"
+          }
+        ],
+        "ctx": {
+          "loc": "İzmir, Türkiye",
+          "dev": "Chrome · macOS",
+          "ip": "203.0.113.42"
+        },
+        "n": "AAECAwQFBgcICQoLDA0ODw",
+        "iat": 1790000000,
+        "exp": 1790000120,
+        "nm": [
+          "47",
+          "82",
+          "15"
+        ]
+      },
+      "correctNumber": "47",
+      "note": "body.nm lists the options the phone shows; the number tapped is appended to the code message as \"nm:<number>\". The QR does not say which option is right."
     },
     "tamperedQr": "TQ2.k1.oKGio6SlpqeoqaqrTLiAANjJ3kPK9zYvMJtFv24hO-_MCtH27vZBpr0WnEJGjF2fNJ43CoTLxuoXvmWSJwx7K8pZ3iyzPfJuCQOplZ9G4ivjBDSg8Vb69h9-rQpEYQjDwzP5ONUWmX2CBFVWPv4TMYw9hEPWt85CCX_fgZCnQVeg8l1x-cpz4PeAuzdcpy94Di2AzOtg8wzV9X0U02rUbaWIH6jyrJg03uF3S32IZLt0Iw2nksXXHqoQHe3NH6nw8jJ1-jIgJVSJAFixM7-t_VqAeCWN7cvSArhfezFIKqs8FZzXNVyzmA2630sQngmQyvEECxqIbzj7BE6awkx_sZ-XJZ2D-D94UgX0f9WvLsANzQxpfDJe23mAvPePlM8ENNsOFyY1UPGjYV12qNwhzNLMw5JHlqYZCyzrZEfBZ6t9ZonA8lMLBa30ti3j8b6toxbR1x9hopoolizo-72FFxDUyRkLxJFVD6lGvHpOHupCSSs4wHjO4e8d7ATVZjgcHHd4PoaooqS61edWDgcZj_2gXjnIFjht7TVtFk2MQzQaXpLoVKqkR1KsRkhezwD22EXTL4i8NeBLYfL7riT4pts_T-tPp2U0scTEqlrygkU",
     "note": "TQ2.<kid>.<base64url(iv12 || ciphertext || tag16)>; AES-256-GCM, associated data = \"TQ2|<kid>\", plaintext = the JSON body. The phone tries the QR key of every account it holds (device secret + that account integration id and user name) and the account whose key opens it shows the details, right after scanning (no Face ID); Face ID is asked only when the user approves, to derive K for the code."

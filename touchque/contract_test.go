@@ -161,6 +161,73 @@ func TestContract_GuardEnrollThenOfflineCode(t *testing.T) {
 	}
 }
 
+func TestContract_GuardPhoneRejectKillsTheOfflineQR(t *testing.T) {
+	api := startFakeAPI(t)
+	c := api.client(t)
+	const user = "reject-offline@acme.com"
+	api.link(user)
+
+	start := runGuard(c, GuardInput{User: user, Action: "LOGIN"})
+	off := runGuard(c, GuardInput{User: user, Action: "LOGIN", Token: start.Body.Token, Offline: true})
+	if off.Body.Touchque.State != StepOffline {
+		t.Fatalf("unexpected offline result: %+v", off.Body)
+	}
+	// The QR is linked to the push the user started.
+	var linked interface{}
+	for _, call := range api.calls() {
+		if call["path"] == "/offline/challenge" {
+			linked = call["body"].(map[string]interface{})["requestId"]
+		}
+	}
+	if linked != start.Body.Touchque.RequestID {
+		t.Fatalf("QR not linked to the push: %v vs %v", linked, start.Body.Touchque.RequestID)
+	}
+
+	// While the QR is up the page keeps polling; nothing changes until the phone answers.
+	poll := runGuard(c, GuardInput{User: user, Action: "LOGIN", Token: off.Body.Token})
+	if poll.Status != 202 || poll.Body.Touchque.State != StepOffline || poll.Body.Touchque.Offline.ChallengeID != off.Body.Touchque.Offline.ChallengeID {
+		t.Fatalf("unexpected poll result: %+v", poll.Body)
+	}
+
+	api.reject("") // the user taps Reject on the phone
+
+	rejected := runGuard(c, GuardInput{User: user, Action: "LOGIN", Token: poll.Body.Token})
+	if rejected.Status != 403 || rejected.Body.Touchque.State != StepRejected {
+		t.Fatalf("expected rejected, got %+v", rejected.Body)
+	}
+	// Even the right code from the QR already on screen does not finish it...
+	late := runGuard(c, GuardInput{User: user, Action: "LOGIN", Token: off.Body.Token, Code: "ABCD123"})
+	if late.Approved != nil || late.Body.Touchque.State != StepRejected || late.Body.Touchque.Reason != "request_rejected" {
+		t.Fatalf("a rejected sign-in must not be finished by a code: %+v", late)
+	}
+	// ...nor the time-based code...
+	totp := runGuard(c, GuardInput{User: user, Action: "LOGIN", Token: off.Body.Token, Code: "123456", CodeType: "totp"})
+	if totp.Approved != nil || totp.Body.Touchque.State != StepRejected {
+		t.Fatalf("time-based code must be refused too: %+v", totp)
+	}
+	// ...and pressing offline mode again gets no QR for that sign-in.
+	again := runGuard(c, GuardInput{User: user, Action: "LOGIN", Token: start.Body.Token, Offline: true})
+	if again.Body.Touchque.State != StepRejected {
+		t.Fatalf("no new QR after a reject: %+v", again.Body)
+	}
+}
+
+func TestContract_GuardOfflineQRCarriesTheNumberForMatching(t *testing.T) {
+	api := startFakeAPI(t)
+	c := api.client(t)
+	api.link("nm-offline@acme.com")
+	api.opts(map[string]interface{}{"numberMatch": true})
+
+	start := runGuard(c, GuardInput{User: "nm-offline@acme.com", Action: "LOGIN"})
+	if start.Body.Touchque.Number != "47" {
+		t.Fatalf("expected the number on the push step: %+v", start.Body)
+	}
+	off := runGuard(c, GuardInput{User: "nm-offline@acme.com", Action: "LOGIN", Token: start.Body.Token, Offline: true})
+	if off.Body.Touchque.Offline == nil || off.Body.Touchque.Offline.ChallengeCode != "47" {
+		t.Fatalf("expected the number for the QR page: %+v", off.Body)
+	}
+}
+
 func TestContract_GuardFrozenRateLimitedBlocked(t *testing.T) {
 	api := startFakeAPI(t)
 	api.link("blocked@acme.com")
