@@ -107,6 +107,16 @@ route('POST', '/login/([^/]+)/consume', (req, res, b, m) => {
     confirmedVia: r.confirmedVia, assurance: assurance(r), approvalProof: null,
   });
 });
+route('POST', '/login/([^/]+)/report-fraud', (req, res, b, m) => {
+  const r = state.requests.find((x) => x.id === m[1]);
+  if (!r) return send(res, 404, { code: 'not_found' });
+  const reason = b.reason === undefined ? 'other' : b.reason;
+  if (!['chargeback', 'account_takeover', 'social_engineering', 'other'].includes(reason)) return send(res, 400, { code: 'invalid_reason' });
+  if (b.note !== undefined && (typeof b.note !== 'string' || b.note.length > 500)) return send(res, 400, { code: 'invalid_note' });
+  const alreadyReported = Boolean(r.fraudReported);
+  r.fraudReported = { reason, note: b.note || null };
+  send(res, 200, { reported: true, alreadyReported, requestId: r.id });
+});
 route('POST', '/login/recovery', (req, res, b) => send(res, 200, { success: true }));
 route('POST', '/auth/generate-secret', (req, res, b) => {
   const u = b.externalUsername;

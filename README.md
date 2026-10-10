@@ -56,6 +56,49 @@ header `X-TouchQue-Token: <token>` — see
 this loop for you in the browser. Once approved, the retried request reaches
 `next` exactly once.
 
+## Relay handler (every route a frontend needs)
+
+`NewRelayHandler` serves the relay routes `@touchque/web` calls — `POST /login`,
+enrollment, offline codes, passkey ceremonies and passkey management — so you
+don't hand-write them. Mount it under a prefix with `http.StripPrefix`:
+
+```go
+mux.Handle("/touchque/", http.StripPrefix("/touchque", touchque.NewRelayHandler(tq, touchque.RelayOptions{
+    UserID: func(r *http.Request) string { return sessionUser(r) },
+    // The user who already passed your password step. Binds POST /login and the
+    // offline routes to them; the offline routes stay off (403) without it.
+    LoginUser: func(r *http.Request) string { return passwordVerifiedUser(r) },
+    OnAuthenticated: func(w http.ResponseWriter, r *http.Request, info touchque.AuthenticatedInfo) error {
+        return startSession(w, info.ExternalUsername) // set cookies here; the handler writes the body
+    },
+})))
+```
+
+| Route | Notes |
+| --- | --- |
+| `POST /enroll/start`, `GET /enroll/status` | signed-in user only; never replaces an already linked phone (409 `already_linked`) |
+| `POST /login` | same two-phase contract as `Require`: `202 {"touchque": step, "token"}` until approved |
+| `POST /offline/challenge`, `/offline/verify`, `/offline/totp` | off (403 `OFFLINE_REQUIRES_FIRST_FACTOR`) unless `LoginUser` or `AllowOfflineWithoutFirstFactor` is set |
+| `POST /passkey/authenticate/options`, `/passkey/authenticate/verify` | passwordless sign-in |
+| `POST /passkey/login/options`, `/passkey/login/verify` | approve a pending sign-in with a passkey |
+| `POST /passkey/register/options`, `/passkey/register/verify`, `GET /passkey/credentials`, `DELETE /passkey/credentials/{id}` | signed-in user only |
+
+- `UserID` is required (`NewRelayHandler` panics without it). Signed-in-only
+  routes answer 401 `UNAUTHORIZED_FOR_2FA` when it returns `""`.
+- With `LoginUser`, usernames in the request body are ignored (401
+  `FIRST_FACTOR_REQUIRED` when it returns `""`), and `/offline/verify` and
+  `/passkey/login/verify` only open a session for the user TouchQue reports if
+  it matches. `OnAuthenticated` always receives TouchQue's user, never one from
+  the body.
+- Pre-auth routes are rate limited in memory, per route: 20 requests per IP and
+  5 per username per minute (429 `RATE_LIMITED` + `Retry-After`). Tune with
+  `RateLimit: &touchque.RateLimitOptions{...}`, or set `Disabled: true` if you
+  limit in front. Set `IP` behind a reverse proxy (default: the host of
+  `r.RemoteAddr`).
+- TouchQue client errors are forwarded with their machine-readable code only;
+  5xx and network failures become 502 `relay_error`. JSON bodies are read only
+  with `Content-Type: application/json`, up to 100 KiB.
+
 ## The three primitives, if you're not using `Require`
 
 ```go
@@ -122,6 +165,30 @@ if err != nil {
 }
 ```
 
+## Verifying the device proof (no need to trust TouchQue)
+
+Every approval from a phone with a hardware key carries `approvalProof`: the phone's own
+signature over the request id, action, number-match code and the exact details it showed.
+
+```go
+ok := touchque.VerifyApprovalProof(event["approvalProof"], touchque.VerifyApprovalProofOptions{
+    RequestID: requestID, Type: "WITHDRAW", Details: details, ChallengeCode: challengeCode,
+    ExpectedPublicKey: user.TouchQueDeviceKey, // stored from their first verified approval
+})
+```
+
+Without `ExpectedPublicKey` it returns false unless `AllowUnpinnedKey` is set (trust on first
+use — store the proof's `PublicKey`, then pin it).
+
+## Reporting fraud
+
+Learned later that an approved request was fraud? Report it — it is the strongest signal
+TouchQue's risk engine learns from, and it stays in your audit log:
+
+```go
+_, err := tq.Login.ReportFraud(requestID, touchque.ReportFraudOptions{Reason: touchque.FraudChargeback})
+```
+
 ## Errors
 
 `APIError`, `NetworkError`, `RejectedError`, `TimeoutError`,
@@ -139,7 +206,7 @@ See [SECURITY.md](./SECURITY.md) to report a vulnerability.
 
 ## Requirements
 
-- Go 1.21+
+- Go 1.26+ (the module's go directive)
 - A [TouchQue Dashboard](https://authenticator.touchque.com) account
 
 ## License

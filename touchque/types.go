@@ -60,6 +60,11 @@ type WebAuthnRegisterVerifyResponse struct {
 type WebAuthnAuthenticateVerifyResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
+	// ExternalUsername is the user whose login request was approved, as
+	// reported by TouchQue (never by the browser). Empty on older APIs.
+	ExternalUsername string `json:"externalUsername,omitempty"`
+	// RequestID is the approved login request, when TouchQue reports it.
+	RequestID string `json:"requestId,omitempty"`
 }
 
 // WebAuthnPrimaryOptionsResponse is returned by WebAuthn.PrimaryOptions.

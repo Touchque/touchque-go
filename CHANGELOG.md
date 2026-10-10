@@ -7,6 +7,27 @@ Go modules are versioned via git tags (e.g. `touchque-go/v1.1.0`), not a
 manifest field — the version below corresponds to the tag this SDK should
 be released under next.
 
+## [3.2.0] — 2026-10-11
+
+### Added
+- **`NewRelayHandler`** — a `net/http` handler serving every relay route a frontend needs
+  (`POST /login`, enrollment, offline QR / codes, passkey sign-in, approval and management), with the
+  same behaviour as the Node SDK's `touchqueRouter`. `RelayOptions.UserID` is required;
+  `LoginUser` binds `/login` and the offline routes to your first factor (the offline routes are off
+  without it unless `AllowOfflineWithoutFirstFactor` is set); pre-auth routes are rate limited per IP
+  and per username by default (`RateLimitOptions`); `OnAuthenticated` runs once per sign-in with the
+  user TouchQue reports, never one from the request body.
+- `WebAuthnAuthenticateVerifyResponse` now carries `ExternalUsername` and `RequestID` when the API
+  returns them.
+- **`VerifyApprovalProof(proof, VerifyApprovalProofOptions)`** and `DetailsDigest` — check the phone's
+  own signature over the request, action, number-match code and details it showed, without trusting
+  TouchQue (same as the Node SDK's `verifyApprovalProof`). Pin the device key with `ExpectedPublicKey`;
+  without it the check fails closed unless `AllowUnpinnedKey` is set. Tested against the cross-SDK
+  golden vectors in `fixtures/approval-proof-vectors.json`.
+- **`client.Login.ReportFraud(requestID, ReportFraudOptions{Reason, Note})`** — report a request you
+  later learned was fraud (chargeback, account takeover, social engineering). TouchQue's risk engine
+  uses it as its strongest training signal; the request's status does not change. Idempotent.
+
 ## [3.1.1] — 2026-10-10
 
 ### Security

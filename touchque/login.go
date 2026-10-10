@@ -308,3 +308,54 @@ func (l *LoginResource) ApproveWithRecoveryCode(requestID string, code string) (
 
 	return resp, nil
 }
+
+// Fraud reasons accepted by ReportFraud.
+const (
+	FraudChargeback        = "chargeback"
+	FraudAccountTakeover   = "account_takeover"
+	FraudSocialEngineering = "social_engineering"
+	FraudOther             = "other"
+)
+
+// ReportFraudOptions describes why a request is being reported.
+type ReportFraudOptions struct {
+	// Reason is one of the Fraud* constants (default FraudOther).
+	Reason string
+	// Note is free text for your audit log, at most 500 characters.
+	Note string
+}
+
+// ReportFraudResponse is the answer to ReportFraud.
+type ReportFraudResponse struct {
+	Reported bool `json:"reported"`
+	// AlreadyReported is true when this request had already been reported.
+	AlreadyReported bool   `json:"alreadyReported"`
+	RequestID       string `json:"requestId"`
+}
+
+// ReportFraud reports a request you later learned was fraud — a chargeback,
+// a confirmed account takeover, a scam the user was talked into. TouchQue's
+// risk engine learns from it (it is the strongest signal it gets) and the
+// report is kept in your audit log. The request's status does not change.
+// Safe to call more than once: a repeat answers AlreadyReported.
+func (l *LoginResource) ReportFraud(requestID string, opts ReportFraudOptions) (*ReportFraudResponse, error) {
+	if requestID == "" {
+		return nil, &ConfigError{Message: "ReportFraud needs the request id"}
+	}
+	payload := map[string]interface{}{}
+	if opts.Reason != "" {
+		payload["reason"] = opts.Reason
+	}
+	if opts.Note != "" {
+		payload["note"] = opts.Note
+	}
+	res, err := l.http.post("/login/"+url.PathEscape(requestID)+"/report-fraud", payload)
+	if err != nil {
+		return nil, err
+	}
+	resp := &ReportFraudResponse{}
+	resp.Reported, _ = res["reported"].(bool)
+	resp.AlreadyReported, _ = res["alreadyReported"].(bool)
+	resp.RequestID, _ = res["requestId"].(string)
+	return resp, nil
+}

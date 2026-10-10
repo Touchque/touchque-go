@@ -69,6 +69,12 @@ func (w *WebAuthnResource) AuthenticateVerify(requestID string, response map[str
 	if m, ok := res["message"].(string); ok {
 		resp.Message = m
 	}
+	if s, ok := res["externalUsername"].(string); ok {
+		resp.ExternalUsername = s
+	}
+	if s, ok := res["requestId"].(string); ok {
+		resp.RequestID = s
+	}
 	return resp, nil
 }
 
