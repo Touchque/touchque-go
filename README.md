@@ -24,7 +24,7 @@ export TQ_API_KEY=tq_auth_your_key
 export TQ_API_SECRET=your_api_secret
 ```
 
-`touchque.NewClient(touchque.Config{})` reads these from the environment when
+`touchque.NewClient(&touchque.Config{})` reads these from the environment when
 left empty.
 
 ## Quick start (net/http)
@@ -32,7 +32,7 @@ left empty.
 ```go
 import "github.com/Touchque/touchque-go/v3/touchque"
 
-tq := touchque.NewClient(touchque.Config{})
+tq := touchque.NewClient(&touchque.Config{})
 
 mux.Handle("/transfer", touchque.Require(tq, "SEND_MONEY", transferHandler, touchque.RequireOptions{
     User: func(r *http.Request) string { return sessionUser(r) },
