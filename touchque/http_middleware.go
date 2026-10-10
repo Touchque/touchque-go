@@ -9,11 +9,11 @@ import (
 
 // RequireOptions configures Require.
 type RequireOptions struct {
-	// User resolves who is approving from the request (required for the
-	// login step — there is no signed-in user yet, return whoever just
-	// passed your password check). If nil, User defaults to reading the
-	// "X-Touchque-User" header (set your own auth middleware to add it, or
-	// pass a real User func).
+	// User resolves who is approving from YOUR server-side state: the
+	// signed-in session, or — for the login step — whoever just passed your
+	// password check. Required: Require panics when it is nil. Never read it
+	// from anything the client sends (a header, a form field): the client
+	// could then name any user and trigger their approval.
 	User func(*http.Request) string
 	// Details: what the phone shows and the approval is bound to. Build it
 	// from server-side state.
@@ -32,10 +32,6 @@ type approvalContextKey struct{}
 func ApprovalFromContext(ctx context.Context) (*Approval, bool) {
 	a, ok := ctx.Value(approvalContextKey{}).(*Approval)
 	return a, ok
-}
-
-func defaultUser(r *http.Request) string {
-	return r.Header.Get("X-Touchque-User")
 }
 
 func defaultIP(r *http.Request) string {
@@ -71,7 +67,9 @@ func guardInputFromRequest(r *http.Request) (token, offline, code, codeType stri
 func Require(client *Client, action string, next http.Handler, opts RequireOptions) http.Handler {
 	userOf := opts.User
 	if userOf == nil {
-		userOf = defaultUser
+		// Fail at wiring time, not per request: there is no safe default.
+		// (Before 3.1.1 this fell back to a client-supplied header.)
+		panic("touchque.Require: RequireOptions.User is required — resolve the user from your server-side session")
 	}
 	ipOf := opts.IP
 	if ipOf == nil {

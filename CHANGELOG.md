@@ -7,6 +7,15 @@ Go modules are versioned via git tags (e.g. `touchque-go/v1.1.0`), not a
 manifest field — the version below corresponds to the tag this SDK should
 be released under next.
 
+## [3.1.1] — 2026-10-10
+
+### Security
+- **`RequireOptions.User` is now required.** When it was nil, `Require` fell back to the
+  client-supplied `X-Touchque-User` header, so on an integration that forgot to set `User` a
+  caller could name any user and trigger that user's approval. `Require` now panics at wiring
+  time without a `User` func. Resolve the user from your server-side session (or, for the login
+  step, from whoever just passed your password check) — never from request input.
+
 ## [3.1.0] — 2026-09-30
 
 ### Security

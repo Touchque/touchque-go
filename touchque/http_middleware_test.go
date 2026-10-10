@@ -86,3 +86,28 @@ func TestRequire_NoUserIs401(t *testing.T) {
 		t.Fatalf("expected 401, got %d", rec.Code)
 	}
 }
+
+func TestRequire_PanicsWithoutUserResolver(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("Require without RequireOptions.User must panic")
+		}
+	}()
+	Require(&Client{}, "SEND_MONEY", http.NotFoundHandler(), RequireOptions{})
+}
+
+func TestRequire_IgnoresClientSuppliedUserHeader(t *testing.T) {
+	api := startFakeAPI(t)
+	api.link("victim@acme.com")
+	c := api.client(t)
+	handler := Require(c, "SEND_MONEY", http.NotFoundHandler(), RequireOptions{
+		User: func(r *http.Request) string { return "" }, // nobody signed in
+	})
+	req := httptest.NewRequest(http.MethodPost, "/transfer", nil)
+	req.Header.Set("X-Touchque-User", "victim@acme.com")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != 401 {
+		t.Fatalf("expected 401 for an anonymous request, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
