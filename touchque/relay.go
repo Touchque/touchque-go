@@ -515,6 +515,9 @@ func (h *relayHandler) login(w http.ResponseWriter, r *http.Request, body relayB
 		User: user, Action: h.actionType, Details: h.details(r),
 		IP: h.ipOf(r), UserAgent: r.UserAgent(),
 		Token: token, Offline: offline == "1", Code: code, CodeType: codeType,
+		// Pre-auth: a typed username proves nothing, so no linking QR unless
+		// LoginUser ties this route to the password step.
+		NoEnroll: h.opts.LoginUser == nil,
 	})
 	if result.Approved == nil {
 		if result.Body.Touchque.RetryAfter > 0 {

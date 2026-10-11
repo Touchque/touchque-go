@@ -21,7 +21,12 @@ var guardStatus = map[StepState]int{
 // GuardInput is what runGuard needs from the current request — the same
 // shape http_middleware.go's Require builds from a *http.Request.
 type GuardInput struct {
-	User        string
+	User string
+	// NoEnroll: never issue a first-time linking QR (and recovery codes) for a
+	// user without a phone. Set it whenever User is not proven by your own
+	// sign-in, e.g. a typed username before the password step: the QR would
+	// let anyone link their own phone to that account.
+	NoEnroll    bool
 	Action      string
 	Details     []LoginDetail
 	ReferenceID string
@@ -221,7 +226,7 @@ func runGuard(c *Client, in GuardInput) GuardResult {
 	}
 
 	// Anything else (no/foreign token, enrollment finished, new attempt): start.
-	step, err := c.Start(in.Action, in.User, StartOptions{Details: norm, ReferenceID: in.ReferenceID, IP: in.IP, UserAgent: in.UserAgent})
+	step, err := c.Start(in.Action, in.User, StartOptions{Details: norm, ReferenceID: in.ReferenceID, IP: in.IP, UserAgent: in.UserAgent, NoEnroll: in.NoEnroll})
 	if err != nil {
 		return errorResult(err)
 	}

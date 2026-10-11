@@ -279,6 +279,33 @@ func TestRelay_LoginUserBindsLoginToTheFirstFactorUser(t *testing.T) {
 	}
 }
 
+func TestRelay_PreAuthLoginNeverHandsAnUnlinkedUserALinkingQR(t *testing.T) {
+	api := startFakeAPI(t)
+	h := mountRelay(api.client(t), RelayOptions{RateLimit: &RateLimitOptions{Disabled: true}})
+	rec, out := relayCall(t, h, "POST", "/login", map[string]interface{}{"externalUsername": "new@example.com"})
+	tq, _ := out["touchque"].(map[string]interface{})
+	if rec.Code != 202 || tq["state"] != "enroll" || tq["enroll"] != nil {
+		t.Fatalf("expected 202 enroll without a QR, got %d %s", rec.Code, rec.Body.String())
+	}
+	if len(callsTo(api, "/auth/generate-secret")) != 0 {
+		t.Fatal("a pre-auth login must not issue a linking secret")
+	}
+}
+
+func TestRelay_LoginBehindThePasswordStepStillOffersLinking(t *testing.T) {
+	api := startFakeAPI(t)
+	h := mountRelay(api.client(t), RelayOptions{
+		LoginUser: func(*http.Request) string { return "new@example.com" },
+		RateLimit: &RateLimitOptions{Disabled: true},
+	})
+	rec, out := relayCall(t, h, "POST", "/login", map[string]interface{}{})
+	tq, _ := out["touchque"].(map[string]interface{})
+	enroll, _ := tq["enroll"].(map[string]interface{})
+	if rec.Code != 202 || enroll == nil || enroll["qrCodeDataUrl"] == "" {
+		t.Fatalf("expected 202 with a linking QR, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestRelay_LoginUserEmptyIs401FirstFactorRequired(t *testing.T) {
 	h := mountRelay(silentClient(t), RelayOptions{
 		LoginUser: func(*http.Request) string { return "" },

@@ -7,6 +7,16 @@ Go modules are versioned via git tags (e.g. `touchque-go/v1.1.0`), not a
 manifest field — the version below corresponds to the tag this SDK should
 be released under next.
 
+## [3.2.1] — 2026-10-11
+
+### Security
+- **The pre-auth relay no longer hands out a first-time linking QR.** `NewRelayHandler`'s `POST /login` used to answer
+  an unlinked user with a linking QR code and recovery codes for whatever username was typed.
+  Anyone could scan that QR first and link their own phone to someone else's account. Now it
+  answers `{ state: 'enroll' }` without a QR unless `RelayOptions.LoginUser` is set, i.e. unless the route
+  only runs after your own password step. Linking from a signed-in page (`/enroll/start`, the
+  step-up guard) is unchanged. Your own guards can opt out with `GuardInput.NoEnroll`.
+
 ## [3.2.0] — 2026-10-11
 
 ### Added
