@@ -68,6 +68,25 @@ const tokenTTLMs = 10 * 60 * 1000
 //	1st request            -> 202 {"touchque": step, "token": ...}   show the step in your UI
 //	repeat with the token   -> 202 while waiting, then the protected action runs once
 //	refused                 -> 403 / 408 / 423 / 429 {"touchque": {"state": ..., ...}}
+// isStatusPoll reports whether this request only polls an approval that is
+// already on its way: a valid token bound to this user/action/details, still
+// waiting, and no offline switch or typed code. It can only read the status,
+// never start a push, so relays do not count it against the per-user push
+// limit (with a 1.5 s poll the 6th poll was refused after 7.5 s).
+func isStatusPoll(c *Client, in GuardInput) bool {
+	if in.User == "" || in.Token == "" || in.Offline || in.Code != "" {
+		return false
+	}
+	t := verifyGuardToken(c.apiSecret, in.Token)
+	if t == nil || t.Rid == "" {
+		return false
+	}
+	if t.U != in.User || t.A != in.Action || t.D != detailsDigest(in.Details) || t.R != in.ReferenceID {
+		return false
+	}
+	return t.St == string(StepWaiting) || t.St == string(StepPasskeyRequired) || t.St == string(StepOffline)
+}
+
 func runGuard(c *Client, in GuardInput) GuardResult {
 	if in.User == "" {
 		return GuardResult{Status: 401, Body: &GuardBody{

@@ -20,7 +20,8 @@ let state;
 function reset() {
   state = {
     requests: [], linked: new Set(), pending: new Set(), calls: [], opts: {}, seq: 0,
-    actions: new Map([['LOGIN', { critical: false }], ['SEND_MONEY', { critical: true }]]),
+    actions: new Map([['LOGIN', { critical: false }], ['SEND_MONEY', { critical: true }], ['PASSKEY_ENROLL', { critical: true }]]),
+    usedEnrollApprovals: new Set(),
     challenges: new Map(), usedNonces: new Set(),
   };
 }
@@ -85,7 +86,10 @@ route('POST', '/login/request', (req, res, b) => {
     requiresPasskey: state.opts.passkeyOnly || undefined,
   };
   state.requests.push(r);
-  send(res, 200, { message: 'Request sent', requestId: r.id, challengeCode: r.challengeCode, expiresAt: new Date(Date.now() + 30000).toISOString(), requiresPasskey: r.requiresPasskey });
+  send(res, 200, {
+    message: 'Request sent', requestId: r.id, challengeCode: r.challengeCode, expiresAt: new Date(Date.now() + 30000).toISOString(), requiresPasskey: r.requiresPasskey,
+    ...(state.opts.telemetry && { telemetryToken: 'tt_test' }),
+  });
 });
 const assurance = (r) => ({ phishingResistant: r.confirmedVia === 'WEBAUTHN', method: r.confirmedVia === 'WEBAUTHN' ? 'passkey' : 'push' });
 route('GET', '/login/status/([^/]+)', (req, res, b, m) => {
@@ -167,8 +171,23 @@ route('POST', '/offline/totp/verify', (req, res, b) => {
   if (b.code !== '123456') return send(res, 401, { approved: false, reason: 'invalid_code' });
   send(res, 200, { approved: true, externalUsername: b.externalUsername });
 });
+// Like the API: a user with a linked phone needs an approved PASSKEY_ENROLL first, used once.
+route('POST', '/webauthn/register/options', (req, res, b) => {
+  const { externalUsername: user, approvalRequestId } = b;
+  if (state.linked.has(user)) {
+    if (!approvalRequestId) return send(res, 403, { code: 'enrollment_approval_required', error: 'enrollment_approval_required', action: 'PASSKEY_ENROLL' });
+    const r = state.requests.find((x) => x.id === approvalRequestId);
+    if (!r || r.user !== user || r.type !== 'PASSKEY_ENROLL' || r.status !== 'CONFIRMED') return send(res, 403, { code: 'enrollment_approval_invalid', error: 'enrollment_approval_invalid' });
+    if (state.usedEnrollApprovals.has(r.id)) return send(res, 403, { code: 'enrollment_approval_used', error: 'enrollment_approval_used' });
+    state.usedEnrollApprovals.add(r.id);
+  }
+  send(res, 200, { challenge: 'reg-challenge', rp: { id: 'example.com', name: 'Example' }, user: { name: user } });
+});
 route('GET', '/webauthn/credentials', (req, res) => send(res, 200, { credentials: [] }));
-route('DELETE', '/webauthn/credentials/([^/]+)', (req, res) => send(res, 200, { deleted: true }));
+// Like the API since 3.3.0: the user the passkey belongs to is required.
+route('DELETE', '/webauthn/credentials/([^/]+)', (req, res) => (new URL(req.url, 'http://x').searchParams.get('externalUsername')
+  ? send(res, 200, { deleted: true })
+  : send(res, 400, { code: 'invalid_request', error: 'externalUsername is required' })));
 
 const server = http.createServer((req, res) => {
   let raw = '';

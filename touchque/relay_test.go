@@ -762,3 +762,73 @@ func TestLimiter_ConcurrentHits(t *testing.T) {
 		t.Fatalf("expected exactly 1000 allowed hits, got %d", allowed)
 	}
 }
+
+// The browser polls every 1.5 s; with the default limiter the 6th poll used
+// to be a 429 while the push was still on the phone.
+func TestRelay_PollingIsNotCountedAgainstThePushLimit(t *testing.T) {
+	api := startFakeAPI(t)
+	api.link("user@example.com")
+	h := mountRelay(api.client(t), RelayOptions{})
+	body := map[string]interface{}{"externalUsername": "user@example.com"}
+	rec, first := relayCall(t, h, "POST", "/login", body)
+	if rec.Code != 202 {
+		t.Fatalf("expected 202, got %d", rec.Code)
+	}
+	token := first["token"].(string)
+	for i := 0; i < 10; i++ {
+		if i == 9 {
+			api.approve("")
+		}
+		rec, _ := relayCall(t, h, "POST", "/login", body, withHeader(GuardTokenHeader, token))
+		want := 202
+		if i == 9 {
+			want = 200
+		}
+		if rec.Code != want {
+			t.Fatalf("poll %d: expected %d, got %d %s", i, want, rec.Code, rec.Body.String())
+		}
+	}
+	// New attempts still are: 4 more starts fill the per-user budget of 5.
+	for i := 0; i < 4; i++ {
+		relayCall(t, h, "POST", "/login", body)
+	}
+	if rec, _ := relayCall(t, h, "POST", "/login", body); rec.Code != 429 {
+		t.Fatalf("the 6th attempt must be limited, got %d", rec.Code)
+	}
+	// A forged token is an attempt too.
+	if rec, _ := relayCall(t, h, "POST", "/login", body, withHeader(GuardTokenHeader, "forged")); rec.Code != 429 {
+		t.Fatalf("a forged token must count as an attempt, got %d", rec.Code)
+	}
+}
+
+// A passkey approves requests on its own, so a stolen session of the partner
+// app must not be able to add one for a user with a linked phone.
+func TestRelay_AddingAPasskeyNeedsThePhone(t *testing.T) {
+	api := startFakeAPI(t)
+	h := mountRelay(api.client(t), RelayOptions{})
+
+	if rec, out := relayCall(t, h, "POST", "/passkey/register/options", map[string]interface{}{}); rec.Code != 200 || out["challenge"] != "reg-challenge" {
+		t.Fatalf("no linked phone: options at once, got %d %v", rec.Code, out)
+	}
+
+	api.link("user@example.com")
+	rec, first := relayCall(t, h, "POST", "/passkey/register/options", map[string]interface{}{})
+	step, _ := first["touchque"].(map[string]interface{})
+	if rec.Code != 202 || step["state"] != "waiting" || step["number"] != "47" {
+		t.Fatalf("expected a number-matched approval step, got %d %v", rec.Code, first)
+	}
+	if calls := callsTo(api, "/login/request"); len(calls) != 1 || calls[0]["body"].(map[string]interface{})["type"] != "PASSKEY_ENROLL" {
+		t.Fatalf("expected one PASSKEY_ENROLL push, got %v", calls)
+	}
+	token := first["token"].(string)
+	if rec, _ := relayCall(t, h, "POST", "/passkey/register/options", map[string]interface{}{}, withHeader(GuardTokenHeader, token)); rec.Code != 202 {
+		t.Fatalf("still waiting: expected 202, got %d", rec.Code)
+	}
+	api.approve("")
+	if rec, out := relayCall(t, h, "POST", "/passkey/register/options", map[string]interface{}{}, withHeader(GuardTokenHeader, token)); rec.Code != 200 || out["challenge"] != "reg-challenge" {
+		t.Fatalf("approved: expected the options, got %d %v", rec.Code, out)
+	}
+	if rec, _ := relayCall(t, h, "POST", "/passkey/register/options", map[string]interface{}{}, withHeader(GuardTokenHeader, token)); rec.Code == 200 {
+		t.Fatal("one approval must unlock one registration")
+	}
+}

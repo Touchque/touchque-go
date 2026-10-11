@@ -29,6 +29,19 @@ func (w *WebAuthnResource) RegisterOptions(externalUsername string, discoverable
 	return w.http.post("/webauthn/register/options", body)
 }
 
+// RegisterOptionsWithApproval is RegisterOptions for a user with a linked
+// phone (the API answers 403 enrollment_approval_required otherwise):
+// approvalRequestID is a PASSKEY_ENROLL request the user approved on the
+// phone, at most 10 minutes old, used once. The relay's
+// /passkey/register/options runs that approval for you.
+func (w *WebAuthnResource) RegisterOptionsWithApproval(externalUsername string, discoverable bool, approvalRequestID string) (map[string]interface{}, error) {
+	body := map[string]interface{}{"externalUsername": externalUsername, "approvalRequestId": approvalRequestID}
+	if discoverable {
+		body["discoverable"] = true
+	}
+	return w.http.post("/webauthn/register/options", body)
+}
+
 // RegisterVerify is step 2 — verify the browser's registration response and
 // store the credential.
 func (w *WebAuthnResource) RegisterVerify(externalUsername string, response map[string]interface{}, label string) (*WebAuthnRegisterVerifyResponse, error) {
@@ -165,6 +178,9 @@ func (w *WebAuthnResource) ListCredentials(externalUsername string) ([]WebAuthnC
 }
 
 // DeleteCredential removes a registered credential.
+//
+// Deprecated: since API 3.3.0 the user is required and this call is refused
+// (400). Use DeleteCredentialForUser.
 func (w *WebAuthnResource) DeleteCredential(credentialRecordID string) (*WebAuthnDeleteCredentialResponse, error) {
 	return w.deleteCredential(credentialRecordID, "")
 }

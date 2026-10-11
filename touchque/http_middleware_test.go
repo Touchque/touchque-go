@@ -111,3 +111,37 @@ func TestRequire_IgnoresClientSuppliedUserHeader(t *testing.T) {
 		t.Fatalf("expected 401 for an anonymous request, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// R1-01: the API needs an address, not "ip:port" — with the port it fell
+// back to scoring the partner's server.
+func TestRequire_SendsHostOnlyClientIP(t *testing.T) {
+	api := startFakeAPI(t)
+	api.link("jane@acme.com")
+	c := api.client(t)
+	handler := requireHandler(c, "SEND_MONEY")
+
+	for _, remote := range []string{"192.0.2.1:1234", "[2001:db8::1]:443"} {
+		req := httptest.NewRequest(http.MethodPost, "/transfer", nil)
+		req.RemoteAddr = remote
+		req.Header.Set("X-User", "jane@acme.com")
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	}
+	var got []interface{}
+	for _, call := range api.calls() {
+		if call["path"] == "/login/request" {
+			body, _ := call["body"].(map[string]interface{})
+			got = append(got, body["clientIp"])
+		}
+	}
+	if len(got) != 2 || got[0] != "192.0.2.1" || got[1] != "2001:db8::1" {
+		t.Fatalf("clientIp sent: %v", got)
+	}
+}
+
+func TestHostOnly(t *testing.T) {
+	for in, want := range map[string]string{"192.0.2.1:80": "192.0.2.1", "[::1]:80": "::1", "192.0.2.1": "192.0.2.1", "2001:db8::1": "2001:db8::1"} {
+		if got := hostOnly(in); got != want {
+			t.Errorf("hostOnly(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

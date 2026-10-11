@@ -47,6 +47,13 @@ func transferHandler(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
+The risk checks (Tor, location, impossible travel) and the location shown on
+the phone use the end user's address. `Require` sends the host part of
+`r.RemoteAddr`; behind a reverse proxy that is the proxy, so set
+`RequireOptions.IP` to the address your proxy saw (the rightmost
+`X-Forwarded-For` hop it appended, never the leftmost one: the client
+controls that).
+
 Until the user approves on their phone, `Require` answers
 **`202 {"touchque": step, "token": "..."}`** instead of calling `next`. Your
 frontend renders `step` in its own UI (a matching number, or a QR code the

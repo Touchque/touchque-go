@@ -39,6 +39,10 @@ type Step struct {
 	Reason     string        `json:"reason,omitempty"`
 	RetryAfter int           `json:"retryAfter,omitempty"`
 	Assurance  *Assurance    `json:"assurance,omitempty"`
+	// TelemetryToken is set only when the workspace collects behavioural
+	// signals: it lets the browser post them for this one request
+	// (@touchque/web does it when given `telemetry`). Not a credential.
+	TelemetryToken string `json:"telemetryToken,omitempty"`
 }
 
 // EnrollStep is shown when the user has not linked a phone yet.
@@ -123,7 +127,7 @@ func (c *Client) Start(action, user string, opts StartOptions) (*Step, error) {
 		if res.RequiresPasskey {
 			return &Step{State: StepPasskeyRequired, RequestID: res.RequestID, ExpiresAt: res.ExpiresAt, Details: norm}, nil
 		}
-		return &Step{State: StepWaiting, RequestID: res.RequestID, Number: res.ChallengeCode, ExpiresAt: res.ExpiresAt, Details: norm}, nil
+		return &Step{State: StepWaiting, RequestID: res.RequestID, Number: res.ChallengeCode, ExpiresAt: res.ExpiresAt, Details: norm, TelemetryToken: res.TelemetryToken}, nil
 	}
 
 	apiErr, ok := err.(*APIError)

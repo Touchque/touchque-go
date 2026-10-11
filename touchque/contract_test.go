@@ -251,3 +251,19 @@ func TestContract_GuardFrozenRateLimitedBlocked(t *testing.T) {
 		t.Fatalf("unexpected blocked result: %+v", blocked.Body)
 	}
 }
+
+// R1-04: the browser can only post behavioural signals with this token.
+func TestStart_WaitingStepCarriesTheTelemetryToken(t *testing.T) {
+	api := startFakeAPI(t)
+	api.link("tel@acme.com")
+	c := api.client(t)
+	step, err := c.Start("LOGIN", "tel@acme.com", StartOptions{})
+	if err != nil || step.TelemetryToken != "" {
+		t.Fatalf("no token unless the workspace issues one: %+v %v", step, err)
+	}
+	api.opts(map[string]interface{}{"telemetry": true})
+	step, err = c.Start("LOGIN", "tel@acme.com", StartOptions{})
+	if err != nil || step.TelemetryToken != "tt_test" {
+		t.Fatalf("expected the telemetry token, got %+v %v", step, err)
+	}
+}

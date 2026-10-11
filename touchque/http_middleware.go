@@ -3,6 +3,7 @@ package touchque
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"strconv"
 )
@@ -20,8 +21,9 @@ type RequireOptions struct {
 	Details func(*http.Request) []LoginDetail
 	// ReferenceID: your own transaction id, bound to the approval.
 	ReferenceID func(*http.Request) string
-	// IP: end user's address (default: r.RemoteAddr — set this explicitly
-	// behind a reverse proxy, from your trusted X-Forwarded-For hop).
+	// IP: end user's address (default: the host part of r.RemoteAddr — set
+	// this explicitly behind a reverse proxy, from your trusted
+	// X-Forwarded-For hop; never the leftmost hop, which the client controls).
 	IP func(*http.Request) string
 }
 
@@ -34,8 +36,19 @@ func ApprovalFromContext(ctx context.Context) (*Approval, bool) {
 	return a, ok
 }
 
+// defaultIP is the host part of r.RemoteAddr: "ip:port" is not an address,
+// and the API would score your server instead of the user.
 func defaultIP(r *http.Request) string {
-	return r.RemoteAddr
+	return hostOnly(r.RemoteAddr)
+}
+
+// hostOnly drops the port from "host:port" / "[v6]:port"; any other value
+// is returned unchanged.
+func hostOnly(addr string) string {
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return addr
 }
 
 func guardInputFromRequest(r *http.Request) (token, offline, code, codeType string) {

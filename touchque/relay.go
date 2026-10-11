@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"mime"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -210,10 +209,7 @@ type relayHandler struct {
 // defaultRelayIP is the host part of r.RemoteAddr (the port changes per
 // connection, which would defeat the per-IP limit).
 func defaultRelayIP(r *http.Request) string {
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return host
-	}
-	return r.RemoteAddr
+	return hostOnly(r.RemoteAddr)
 }
 
 type relayBody map[string]interface{}
@@ -379,7 +375,15 @@ func (h *relayHandler) offlineAllowed(w http.ResponseWriter) bool {
 
 // allow answers 429 and returns false when this IP or this user is over the
 // limit for route. Both counters are always hit.
+// A 1.5 s poll for a 2-minute push is 80 requests: one attempt's worth of polls.
+const pollsPerAttempt = 10
+
 func (h *relayHandler) allow(w http.ResponseWriter, r *http.Request, route, user string) bool {
+	return h.allowN(w, r, route, user, 1)
+}
+
+// allowN is allow with the per-IP budget multiplied by ipFactor.
+func (h *relayHandler) allowN(w http.ResponseWriter, r *http.Request, route, user string, ipFactor int) bool {
 	if h.limiter == nil {
 		return true
 	}
@@ -387,7 +391,7 @@ func (h *relayHandler) allow(w http.ResponseWriter, r *http.Request, route, user
 	if ip == "" {
 		ip = "unknown"
 	}
-	wait := h.limiter.hit("ip|"+route+"|"+ip, h.limiter.perIP)
+	wait := h.limiter.hit("ip|"+route+"|"+ip, h.limiter.perIP*ipFactor)
 	if user != "" {
 		if uw := h.limiter.hit("user|"+route+"|"+user, h.limiter.perUser); uw > wait {
 			wait = uw
@@ -504,21 +508,31 @@ func (h *relayHandler) enrollStatus(w http.ResponseWriter, r *http.Request) {
 
 func (h *relayHandler) login(w http.ResponseWriter, r *http.Request, body relayBody) {
 	user := h.loginUser(w, r, body, "externalUsername")
-	if user == "" || !h.allow(w, r, "login", user) {
+	if user == "" {
 		return
 	}
 	// Same two-phase contract as Require: 202 with the step (matching number
 	// / first-time QR / offline QR) until approved; the page re-sends with
 	// X-TouchQue-Token.
 	token, offline, code, codeType := guardInputFromRequest(r)
-	result := runGuard(h.client, GuardInput{
+	in := GuardInput{
 		User: user, Action: h.actionType, Details: h.details(r),
 		IP: h.ipOf(r), UserAgent: r.UserAgent(),
 		Token: token, Offline: offline == "1", Code: code, CodeType: codeType,
 		// Pre-auth: a typed username proves nothing, so no linking QR unless
 		// LoginUser ties this route to the password step.
 		NoEnroll: h.opts.LoginUser == nil,
-	})
+	}
+	// Polling an approval already sent is not a new attempt: it has its own,
+	// larger per-IP budget and never uses the user's push budget.
+	if isStatusPoll(h.client, in) {
+		if !h.allowN(w, r, "login-poll", "", pollsPerAttempt) {
+			return
+		}
+	} else if !h.allow(w, r, "login", user) {
+		return
+	}
+	result := runGuard(h.client, in)
 	if result.Approved == nil {
 		if result.Body.Touchque.RetryAfter > 0 {
 			w.Header().Set("Retry-After", strconv.Itoa(result.Body.Touchque.RetryAfter))
@@ -724,12 +738,55 @@ func (h *relayHandler) passkeyApproveVerify(w http.ResponseWriter, r *http.Reque
 
 // ── Passkey: enrollment / management (auth required) ─────────────────
 
+// passkeyEnrollAction is the reserved action whose approval on the phone
+// unlocks adding a passkey.
+const passkeyEnrollAction = "PASSKEY_ENROLL"
+
+// passkeyRegisterOptions: a user with a linked phone approves adding a
+// passkey there first. A passkey approves requests on its own, so a stolen
+// session of your app must not be able to add one. Same two-phase contract
+// as /login: 202 with the step (and number to show) until approved, then
+// the options.
 func (h *relayHandler) passkeyRegisterOptions(w http.ResponseWriter, r *http.Request, _ relayBody) {
 	userID := h.requireUserID(w, r)
 	if userID == "" {
 		return
 	}
-	res, err := h.client.WebAuthn.RegisterOptions(userID, true)
+	token, offline, code, codeType := guardInputFromRequest(r)
+	if token == "" {
+		res, err := h.client.WebAuthn.RegisterOptions(userID, true)
+		if err == nil {
+			writeRelayJSON(w, http.StatusOK, res)
+			return
+		}
+		apiErr, ok := err.(*APIError)
+		if !ok || apiErr.StatusCode != http.StatusForbidden || apiErr.Code != "enrollment_approval_required" {
+			sendRelayError(w, err)
+			return
+		}
+	}
+	in := GuardInput{
+		User: userID, Action: passkeyEnrollAction, NoEnroll: true,
+		IP: h.ipOf(r), UserAgent: r.UserAgent(),
+		Token: token, Offline: offline == "1", Code: code, CodeType: codeType,
+	}
+	if isStatusPoll(h.client, in) {
+		if !h.allowN(w, r, "login-poll", "", pollsPerAttempt) {
+			return
+		}
+	} else if !h.allow(w, r, "passkey-enroll", userID) {
+		return
+	}
+	result := runGuard(h.client, in)
+	if result.Approved == nil {
+		if result.Body.Touchque.RetryAfter > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(result.Body.Touchque.RetryAfter))
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeRelayJSON(w, result.Status, result.Body)
+		return
+	}
+	res, err := h.client.WebAuthn.RegisterOptionsWithApproval(userID, true, result.Approved.RequestID)
 	if err != nil {
 		sendRelayError(w, err)
 		return

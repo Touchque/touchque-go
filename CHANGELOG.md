@@ -7,6 +7,34 @@ Go modules are versioned via git tags (e.g. `touchque-go/v1.1.0`), not a
 manifest field — the version below corresponds to the tag this SDK should
 be released under next.
 
+## [3.3.0] — 2026-10-12
+
+### Fixed
+- **`Require` sent `r.RemoteAddr` with its port** (`"203.0.113.7:51234"`). That is not an address, so the
+  API scored your server's address instead of the user's: Tor, location, travel and the location shown
+  on the phone were all blind, and every user of your app looked like one IP. The default is now the
+  host part, like the relay's.
+- **Waiting on an approval no longer hits the rate limit.** Each browser poll of `/login` counted against
+  the per-user limit (5 a minute), so a user who took more than about 7.5 s to approve got a 429 while
+  the push was still on the phone. A poll that carries a valid, still-waiting token only reads the
+  status and now has its own per-IP budget; new attempts are counted as before.
+
+### Security
+- **Adding a passkey needs the phone.** `NewRelayHandler`'s `/passkey/register/options` used to hand out
+  registration options to anyone holding your app's session, and a passkey approves requests on its
+  own, so a stolen session cookie could become a permanent second factor. For a user with a linked
+  phone the route now answers the same two-phase step as `/login` (202 with the number to show; the
+  user approves a `PASSKEY_ENROLL` request on the phone) and returns the options only after that
+  approval, once. Users without a linked phone are unchanged. The TouchQue API enforces this too:
+  `WebAuthn.RegisterOptionsWithApproval` takes the approved request id as `approvalRequestID`.
+- **Passkey delete needs the user.** The API now refuses `DELETE /webauthn/credentials/{id}` without
+  `externalUsername`: use `DeleteCredentialForUser`; `DeleteCredential` is deprecated.
+
+### Added
+- The waiting step carries `TelemetryToken` when the workspace collects behavioural signals, so
+  `@touchque/web` can send them (pass `telemetry: { apiBaseUrl }` to `touchqueFetch`). Before, the token
+  never reached the browser and the bot and browser signals never ran for SDK integrations.
+
 ## [3.2.1] — 2026-10-11
 
 ### Security
