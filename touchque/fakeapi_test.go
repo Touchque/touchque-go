@@ -97,6 +97,19 @@ func (f *fakeAPI) approveVia(id, via string) {
 
 func (f *fakeAPI) reject(id string) { f.call("/__test/reject", map[string]interface{}{"id": id}) }
 
+func (f *fakeAPI) approveProvisional(id string) {
+	f.call("/__test/approve", map[string]interface{}{"id": id, "provisional": true})
+}
+
+// escalate: the Vishing Shield moved the request to a passkey at the phone tap (still PENDING).
+func (f *fakeAPI) escalate(id string) { f.call("/__test/escalate", map[string]interface{}{"id": id}) }
+
+func (f *fakeAPI) revoke(id, reason string) {
+	f.call("/__test/revoke", map[string]interface{}{"id": id, "reason": reason})
+}
+
+func (f *fakeAPI) reconfirm(id string) { f.call("/__test/reconfirm", map[string]interface{}{"id": id}) }
+
 func (f *fakeAPI) calls() []map[string]interface{} {
 	f.t.Helper()
 	resp, err := http.Get(f.baseURL + "/__test/calls")

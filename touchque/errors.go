@@ -78,12 +78,19 @@ func (e *WebhookReplayError) Error() string {
 	return "Webhook was already accepted (replayed jti)"
 }
 
-// PasskeyRequiredError means a phishing-resistant policy requires this
-// request to be approved with a passkey — no push was sent.
+// PasskeyRequiredError means this request must be approved with a passkey.
+// Reason is "" or "policy" when a phishing-resistant policy requires it (no
+// push was sent), or "step_up" when the user tapped Approve on the phone
+// during a call (Vishing Shield) and the request, still open, now waits for a
+// passkey in the browser.
 type PasskeyRequiredError struct {
 	RequestID string
+	Reason    string
 }
 
 func (e *PasskeyRequiredError) Error() string {
+	if e.Reason == "step_up" {
+		return fmt.Sprintf("TouchQue: request %q must now be approved with a passkey: the user approved on the phone during a call.", e.RequestID)
+	}
 	return fmt.Sprintf("TouchQue: request %q must be approved with a passkey (phishing-resistant policy); no push was sent.", e.RequestID)
 }

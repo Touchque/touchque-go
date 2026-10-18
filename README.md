@@ -165,12 +165,42 @@ fails verification.
 ## Webhooks
 
 ```go
-event, err := tq.Webhook.Verify(rawBody, r.Header.Get("X-TouchQue-Signature"))
+event, err := tq.Webhook.Verify(rawBody, r.Header.Get("X-Signature"))
 if err != nil {
     w.WriteHeader(http.StatusForbidden) // not from TouchQue
     return
 }
+if event["event"] == touchque.EventApprovalRevoked {
+    endSessionsBuiltOn(event["requestId"])
+}
 ```
+
+Login results carry `status` (`SUCCESS` | `REJECTED`) and, when rejected, a `reason` (`touchque.Reason*`):
+`user_rejected`, `user_reported_fraud`, `user_reported_coached` (the user said someone on the phone told
+them to approve), `risk_reversed`, `risk_step_up`, `approval_signature_invalid`, `device_integrity_failed`,
+`vishing_suspected` and `phishing_origin` (see Vishing Shield). Treat a reason you do not know as a rejection.
+Event webhooks carry `event` (`touchque.Event*`): `DEVICE_LINKED`, `DEVICE_UNLINKED`, `PASSKEY_REGISTERED`,
+`PASSKEY_DELETED`, `APPROVAL_RECONFIRMED`, `APPROVAL_REVOKED`. Ignore events you do not know.
+
+## Vishing Shield (someone on the phone guiding the user)
+
+The phone tells TouchQue, signed with its hardware key, whether a call was active (or just ended), the screen
+was shared or the phone remote-controlled when the user tapped Approve. Depending on the server's mode:
+
+- **Passkey instead.** A user with a passkey finishes in the browser: the request stays open and turns into
+  `passkey_required` mid-flight. The step-up flow and the relay handle it; the blocking `Login.VerifyWithOptions` returns
+  `*touchque.PasskeyRequiredError` (`Reason == "step_up"`). No offline or recovery code can finish such a request.
+- **Refused.** A critical action without a passkey is rejected (`reason: vishing_suspected`).
+- **Provisional.** Anything else is approved with `Provisional` set on `Approval` from `Complete`. Let the user
+  in, but treat the session as limited: TouchQue refuses the user's critical actions (`blocked` / `provisional`)
+  until the phone re-confirms after the call (`APPROVAL_RECONFIRMED`). `APPROVAL_REVOKED` (`reason` `COACHED` or
+  `UNDO`) means end the session; an approval revoked before you consumed it can no longer be consumed
+  (409 `revoked`).
+
+**Mirror Alarm.** The first waiting step carries `canary.url`. `@touchque/web` loads it on the page showing the
+sign-in and sends a beacon to it, so a real-time phishing proxy in front of your site shows up as itself: the
+approval is refused (`reason: phishing_origin`) and the phone warns the user. Allow the canary host in your
+Content-Security-Policy (`img-src` and `connect-src`).
 
 ## Verifying the device proof (no need to trust TouchQue)
 

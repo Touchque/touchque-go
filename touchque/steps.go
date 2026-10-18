@@ -43,6 +43,10 @@ type Step struct {
 	// signals: it lets the browser post them for this one request
 	// (@touchque/web does it when given `telemetry`). Not a credential.
 	TelemetryToken string `json:"telemetryToken,omitempty"`
+	// Canary (Mirror Alarm): the page showing this step loads it and beacons to
+	// it (@touchque/web does it), so a phishing proxy in front of your site is
+	// caught. Only on the first waiting step.
+	Canary *Canary `json:"canary,omitempty"`
 }
 
 // EnrollStep is shown when the user has not linked a phone yet.
@@ -72,6 +76,11 @@ type Approval struct {
 	Assurance     *Assurance  `json:"assurance,omitempty"`
 	ConfirmedVia  string      `json:"confirmedVia,omitempty"`
 	ApprovalProof interface{} `json:"approvalProof,omitempty"`
+	// Vishing Shield: Provisional means approved during a call. Let the user
+	// in, but treat the session as limited: TouchQue refuses their critical
+	// actions until the phone re-confirms (EventApprovalReconfirmed), and
+	// EventApprovalRevoked means end it.
+	ShieldFields
 }
 
 // StartOptions configures Start.
@@ -124,10 +133,14 @@ func (c *Client) Start(action, user string, opts StartOptions) (*Step, error) {
 		ClientIP: opts.IP, UserAgent: opts.UserAgent, Details: norm,
 	})
 	if err == nil {
-		if res.RequiresPasskey {
-			return &Step{State: StepPasskeyRequired, RequestID: res.RequestID, ExpiresAt: res.ExpiresAt, Details: norm}, nil
+		var canary *Canary
+		if res.Canary != nil && res.Canary.URL != "" {
+			canary = &Canary{URL: res.Canary.URL}
 		}
-		return &Step{State: StepWaiting, RequestID: res.RequestID, Number: res.ChallengeCode, ExpiresAt: res.ExpiresAt, Details: norm, TelemetryToken: res.TelemetryToken}, nil
+		if res.RequiresPasskey {
+			return &Step{State: StepPasskeyRequired, RequestID: res.RequestID, ExpiresAt: res.ExpiresAt, Details: norm, Canary: canary}, nil
+		}
+		return &Step{State: StepWaiting, RequestID: res.RequestID, Number: res.ChallengeCode, ExpiresAt: res.ExpiresAt, Details: norm, TelemetryToken: res.TelemetryToken, Canary: canary}, nil
 	}
 
 	apiErr, ok := err.(*APIError)
@@ -244,6 +257,7 @@ func (c *Client) Complete(requestID, user, action string, expect CompleteExpect)
 	return &Approval{
 		RequestID: requestID, User: res.ExternalUsername, Action: res.Type,
 		Assurance: res.Assurance, ConfirmedVia: res.ConfirmedVia, ApprovalProof: res.ApprovalProof,
+		ShieldFields: res.ShieldFields,
 	}, nil
 }
 

@@ -37,6 +37,16 @@ type LoginRequestResponse struct {
 	// to your frontend to initialize the @touchque/web behavioral widget
 	// (tq.behavioral.attach(...)). There is no widget in this server SDK.
 	TelemetryToken string `json:"telemetryToken,omitempty"`
+	// Canary is the Mirror Alarm probe: the page that shows this sign-in loads
+	// its URL and sends a beacon to it (@touchque/web does both), so a
+	// real-time phishing proxy in front of your site gets the approval refused
+	// (webhook reason phishing_origin). Allow its host in your CSP.
+	Canary *Canary `json:"canary,omitempty"`
+}
+
+// Canary is the Mirror Alarm probe of one login request.
+type Canary struct {
+	URL string `json:"url"`
 }
 
 // GetUserResponse is the link status of a user (Auth.GetUser). used flips true
@@ -108,9 +118,26 @@ type LoginStatusResponse struct {
 	ReferenceID      string        `json:"referenceId,omitempty"`
 	Details          []LoginDetail `json:"details,omitempty"`
 	Consumed         bool          `json:"consumed,omitempty"`
-	RequiresPasskey  bool          `json:"requiresPasskey,omitempty"`
-	ConfirmedVia     string        `json:"confirmedVia,omitempty"`
-	Assurance        *Assurance    `json:"assurance,omitempty"`
+	// RequiresPasskey: only a passkey can approve it — a phishing-resistant
+	// policy, or the Vishing Shield moved it to a passkey at the phone tap
+	// because the user was on a call (it is still PENDING then).
+	RequiresPasskey bool       `json:"requiresPasskey,omitempty"`
+	ConfirmedVia    string     `json:"confirmedVia,omitempty"`
+	Assurance       *Assurance `json:"assurance,omitempty"`
+	ShieldFields
+}
+
+// ShieldFields are the Vishing Shield fields of an approval. Provisional: it
+// was given on the phone during a call; it stays CONFIRMED, but the user's
+// critical actions are refused (blocked / provisional) until the phone
+// re-confirms it after the call (ReconfirmedAt) or the user takes it back
+// (Revoked, RevokeReason "COACHED" or "UNDO"). End what was built on a
+// revoked approval.
+type ShieldFields struct {
+	Provisional   bool   `json:"provisional,omitempty"`
+	ReconfirmedAt string `json:"reconfirmedAt,omitempty"`
+	Revoked       bool   `json:"revoked,omitempty"`
+	RevokeReason  string `json:"revokeReason,omitempty"`
 }
 
 // VerifyResponse represents the response from verifying a login request.
@@ -121,6 +148,9 @@ type VerifyResponse struct {
 	ChallengeCode string     `json:"challengeCode,omitempty"`
 	Assurance     *Assurance `json:"assurance,omitempty"`
 	ConfirmedVia  string     `json:"confirmedVia,omitempty"`
+	// Provisional: approved during a call (Vishing Shield); critical actions
+	// wait until the phone re-confirms it.
+	Provisional bool `json:"provisional,omitempty"`
 }
 
 // Assurance describes how a request was approved. PhishingResistant is true
@@ -141,6 +171,7 @@ type ConsumeResponse struct {
 	ConfirmedVia     string        `json:"confirmedVia,omitempty"`
 	Assurance        *Assurance    `json:"assurance,omitempty"`
 	ApprovalProof    interface{}   `json:"approvalProof,omitempty"`
+	ShieldFields
 }
 
 // UnlinkSecretResponse represents the response from unlinking a device

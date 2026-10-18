@@ -1,0 +1,24 @@
+{
+  "description": "TouchQue Vishing Shield v1 shared vectors. The phone apps and the authenticator backend must produce these exact UTF-8 bytes. ctx is canonical: keys in this fixed order, bucketed values only.",
+  "version": "v1",
+  "ctx": {
+    "keys": ["call", "capture", "remote"],
+    "values": { "call": ["active", "recent", "none", "na"], "capture": ["1", "0", "na"], "remote": ["1", "0", "na"] },
+    "recentWindowSeconds": 600,
+    "cases": [
+      { "name": "clean", "fields": { "call": "none", "capture": "0", "remote": "0" }, "expected": "call=none;capture=0;remote=0", "coaching": false },
+      { "name": "activeCall", "fields": { "call": "active", "capture": "0", "remote": "na" }, "expected": "call=active;capture=0;remote=na", "coaching": true },
+      { "name": "recentCall", "fields": { "call": "recent", "capture": "0", "remote": "0" }, "expected": "call=recent;capture=0;remote=0", "coaching": true },
+      { "name": "screenShared", "fields": { "call": "none", "capture": "1", "remote": "0" }, "expected": "call=none;capture=1;remote=0", "coaching": true },
+      { "name": "remoteControl", "fields": { "call": "none", "capture": "0", "remote": "1" }, "expected": "call=none;capture=0;remote=1", "coaching": true },
+      { "name": "nothingDetectable", "fields": { "call": "na", "capture": "na", "remote": "na" }, "expected": "call=na;capture=na;remote=na", "coaching": false }
+    ]
+  },
+  "messages": [
+    { "name": "ctx", "format": "touchque-ctx:v1\\n{requestId}\\n{ctx}", "requestId": "3f2a9c1e-5b7d-4e8a-9c0f-1a2b3c4d5e6f", "ctx": "call=active;capture=0;remote=na", "expected": "touchque-ctx:v1\n3f2a9c1e-5b7d-4e8a-9c0f-1a2b3c4d5e6f\ncall=active;capture=0;remote=na" },
+    { "name": "reconfirm", "format": "touchque-reconfirm:v1\\n{requestId}\\n{ctx}", "requestId": "3f2a9c1e-5b7d-4e8a-9c0f-1a2b3c4d5e6f", "ctx": "call=none;capture=0;remote=0", "expected": "touchque-reconfirm:v1\n3f2a9c1e-5b7d-4e8a-9c0f-1a2b3c4d5e6f\ncall=none;capture=0;remote=0" },
+    { "name": "revokeCoached", "format": "touchque-revoke:v1\\n{requestId}\\n{reason}", "requestId": "3f2a9c1e-5b7d-4e8a-9c0f-1a2b3c4d5e6f", "reason": "COACHED", "expected": "touchque-revoke:v1\n3f2a9c1e-5b7d-4e8a-9c0f-1a2b3c4d5e6f\nCOACHED" },
+    { "name": "revokeUndo", "format": "touchque-revoke:v1\\n{requestId}\\n{reason}", "requestId": "3f2a9c1e-5b7d-4e8a-9c0f-1a2b3c4d5e6f", "reason": "UNDO", "expected": "touchque-revoke:v1\n3f2a9c1e-5b7d-4e8a-9c0f-1a2b3c4d5e6f\nUNDO" },
+    { "name": "rejectCoached", "format": "touchque-reject:v1\\n{requestId}\\n{reason}", "requestId": "3f2a9c1e-5b7d-4e8a-9c0f-1a2b3c4d5e6f", "reason": "COACHED", "expected": "touchque-reject:v1\n3f2a9c1e-5b7d-4e8a-9c0f-1a2b3c4d5e6f\nCOACHED" }
+  ]
+}

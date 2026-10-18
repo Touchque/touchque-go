@@ -106,8 +106,24 @@ func (l *LoginResource) RequestWithOptions(opts LoginRequestOptions) (*LoginRequ
 	if rp, ok := res["requiresPasskey"].(bool); ok {
 		resp.RequiresPasskey = rp
 	}
+	if canary, ok := res["canary"].(map[string]interface{}); ok {
+		if u, ok := canary["url"].(string); ok && u != "" {
+			resp.Canary = &Canary{URL: u}
+		}
+	}
 
 	return resp, nil
+}
+
+// parseShieldFields reads the Vishing Shield fields of a status or consume
+// answer (absent from servers before it: all zero).
+func parseShieldFields(res map[string]interface{}) ShieldFields {
+	var f ShieldFields
+	f.Provisional, _ = res["provisional"].(bool)
+	f.ReconfirmedAt, _ = res["reconfirmedAt"].(string)
+	f.Revoked, _ = res["revoked"].(bool)
+	f.RevokeReason, _ = res["revokeReason"].(string)
+	return f
 }
 
 func parseAssurance(res map[string]interface{}) *Assurance {
@@ -179,6 +195,7 @@ func (l *LoginResource) Status(requestID string) (*LoginStatusResponse, error) {
 		resp.ConfirmedVia = v
 	}
 	resp.Assurance = parseAssurance(res)
+	resp.ShieldFields = parseShieldFields(res)
 
 	return resp, nil
 }
@@ -213,6 +230,7 @@ func (l *LoginResource) Consume(requestID string) (*ConsumeResponse, error) {
 	}
 	resp.Assurance = parseAssurance(res)
 	resp.ApprovalProof = res["approvalProof"]
+	resp.ShieldFields = parseShieldFields(res)
 	return resp, nil
 }
 
@@ -262,7 +280,14 @@ func (l *LoginResource) VerifyWithOptions(opts LoginRequestOptions, timeoutMs in
 				ChallengeCode: reqResult.ChallengeCode,
 				Assurance:     statusResult.Assurance,
 				ConfirmedVia:  statusResult.ConfirmedVia,
+				Provisional:   statusResult.Provisional,
 			}, nil
+		case "PENDING":
+			// Vishing Shield: tapped during a call, the request now waits for a
+			// passkey in the browser; polling would only run into the timeout.
+			if statusResult.RequiresPasskey {
+				return nil, &PasskeyRequiredError{RequestID: reqID, Reason: "step_up"}
+			}
 		case "REJECTED":
 			return nil, &RejectedError{Message: "Request " + reqID + " was rejected by the user."}
 		case "EXPIRED":

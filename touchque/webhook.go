@@ -16,6 +16,41 @@ import (
 // signed `timestamp` is further than this from now is rejected.
 const defaultWebhookToleranceSeconds = 300
 
+// Reason values of a REJECTED login webhook. Treat a value you do not know as
+// a rejection: new ones are added in minor versions.
+const (
+	ReasonUserRejected = "user_rejected"
+	// ReasonUserReportedFraud: the user said "this wasn't me"; 2FA is frozen.
+	ReasonUserReportedFraud = "user_reported_fraud"
+	// ReasonUserReportedCoached: the user said someone on the phone told them
+	// to approve; 2FA is frozen. Treat it as a takeover in progress.
+	ReasonUserReportedCoached      = "user_reported_coached"
+	ReasonRiskReversed             = "risk_reversed"
+	ReasonRiskStepUp               = "risk_step_up"
+	ReasonApprovalSignatureInvalid = "approval_signature_invalid"
+	ReasonDeviceIntegrityFailed    = "device_integrity_failed"
+	// ReasonVishingSuspected (Vishing Shield): approved during a call (or with
+	// the screen shared / remote-controlled), critical, and no passkey.
+	ReasonVishingSuspected = "vishing_suspected"
+	// ReasonPhishingOrigin (Mirror Alarm): the sign-in page was not on your
+	// site (a real-time phishing proxy).
+	ReasonPhishingOrigin = "phishing_origin"
+)
+
+// Event values of TouchQue's event webhooks. Ignore types you do not know.
+const (
+	EventDeviceLinked      = "DEVICE_LINKED"
+	EventDeviceUnlinked    = "DEVICE_UNLINKED"
+	EventPasskeyRegistered = "PASSKEY_REGISTERED"
+	EventPasskeyDeleted    = "PASSKEY_DELETED"
+	// EventApprovalReconfirmed: after the call, the user confirmed a
+	// provisional approval was theirs; critical actions are allowed again.
+	EventApprovalReconfirmed = "APPROVAL_RECONFIRMED"
+	// EventApprovalRevoked: the user took an approval back (reason COACHED or
+	// UNDO); end the session or stop the action built on it.
+	EventApprovalRevoked = "APPROVAL_REVOKED"
+)
+
 // WebhookReplayCache stores webhook `jti`s already accepted. CheckAndSet must
 // atomically record jti for ttl and return true if it was NOT seen before.
 // Use NewMemoryReplayCache for a single process, or implement it over Redis /

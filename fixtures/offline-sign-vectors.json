@@ -102,6 +102,17 @@
       "expectedCode": "AQ3HDD4"
     }
   ],
+  "totpUnanchored": {
+    "fields": {
+      "iid": "6b8e3069-4716-4392-a6ce-08288bbb3380",
+      "usr": "Jane@DemoBank.example",
+      "step": 59666667,
+      "anchored": false
+    },
+    "expectedMessage": "touchque-offline-totp:v1-unanchored\n6b8e3069-4716-4392-a6ce-08288bbb3380\njane@demobank.example\n59666667",
+    "expectedCode": "SWJWQZZ",
+    "note": "A code the phone computed from its own wall clock because it had no time anchor (rebooted, no network since). Same step rule, own label."
+  },
   "totp": {
     "stepSeconds": 30,
     "fields": {
