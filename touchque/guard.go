@@ -1,6 +1,7 @@
 package touchque
 
 import (
+	"context"
 	"log"
 	"strings"
 )
@@ -11,7 +12,15 @@ const (
 	GuardOfflineHeader  = "X-TouchQue-Offline"
 	GuardCodeHeader     = "X-TouchQue-Code"
 	GuardCodeTypeHeader = "X-TouchQue-Code-Type"
+	// GuardBrowserHeader carries the browser's device-bound key proof
+	// (silent sign-ins). Require and the relay read it only when their
+	// SilentSignIn option is on.
+	GuardBrowserHeader = "X-TouchQue-Browser"
 )
+
+// maxBrowserProof: a real proof is a few hundred characters; anything far
+// larger is not one and is neither checked nor passed on.
+const maxBrowserProof = 4096
 
 var guardStatus = map[StepState]int{
 	StepWaiting: 202, StepEnroll: 202, StepPasskeyRequired: 202, StepOffline: 202,
@@ -36,6 +45,20 @@ type GuardInput struct {
 	Offline     bool
 	Code        string
 	CodeType    string
+	// BrowserProof (silent sign-ins): the browser's device-bound key proof
+	// (X-TouchQue-Browser), passed through untouched. Attached to the push,
+	// so its approval makes the browser known.
+	BrowserProof string
+	// SilentSignIn (default off): a new attempt that carries BrowserProof
+	// first asks TouchQue (Risk.Check); when it answers prompt: false the
+	// guard approves at once, with no push (Assurance.Method "silent",
+	// ConfirmedVia "SILENT", RequestID "silent", Reasons). Otherwise, and on
+	// any error, the usual push starts.
+	SilentSignIn bool
+	// SilentSignInMaxAgeSeconds is your own limit on how long ago the last
+	// phone approval in this browser may be (0 = always ask). nil leaves it
+	// to TouchQue, which never goes beyond its own limit (7 days).
+	SilentSignInMaxAgeSeconds *int
 }
 
 // GuardError is the machine-readable error alongside a refusal's body.
@@ -62,12 +85,6 @@ type GuardResult struct {
 
 const tokenTTLMs = 10 * 60 * 1000
 
-// runGuard is the framework-agnostic step-up guard shared by every net/http
-// adapter (see Require). Contract, the same in every TouchQue server SDK:
-//
-//	1st request            -> 202 {"touchque": step, "token": ...}   show the step in your UI
-//	repeat with the token   -> 202 while waiting, then the protected action runs once
-//	refused                 -> 403 / 408 / 423 / 429 {"touchque": {"state": ..., ...}}
 // isStatusPoll reports whether this request only polls an approval that is
 // already on its way: a valid token bound to this user/action/details, still
 // waiting, and no offline switch or typed code. It can only read the status,
@@ -87,7 +104,19 @@ func isStatusPoll(c *Client, in GuardInput) bool {
 	return t.St == string(StepWaiting) || t.St == string(StepPasskeyRequired) || t.St == string(StepOffline)
 }
 
+// runGuard is the framework-agnostic step-up guard shared by every net/http
+// adapter (see Require). Contract, the same in every TouchQue server SDK:
+//
+//	1st request            -> 202 {"touchque": step, "token": ...}   show the step in your UI
+//	repeat with the token   -> 202 while waiting, then the protected action runs once
+//	refused                 -> 403 / 408 / 423 / 429 {"touchque": {"state": ..., ...}}
 func runGuard(c *Client, in GuardInput) GuardResult {
+	return runGuardContext(context.Background(), c, in)
+}
+
+// runGuardContext is runGuard bound to ctx (the incoming request's): it
+// cancels the silent sign-in check, which then falls back to the usual start.
+func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult {
 	if in.User == "" {
 		return GuardResult{Status: 401, Body: &GuardBody{
 			Touchque: Step{State: StepBlocked, Reason: "unauthenticated"},
@@ -258,11 +287,54 @@ func runGuard(c *Client, in GuardInput) GuardResult {
 	}
 
 	// Anything else (no/foreign token, enrollment finished, new attempt): start.
-	step, err := c.Start(in.Action, in.User, StartOptions{Details: norm, ReferenceID: in.ReferenceID, IP: in.IP, UserAgent: in.UserAgent, NoEnroll: in.NoEnroll})
+	browserProof := ""
+	if len(in.BrowserProof) <= maxBrowserProof {
+		browserProof = in.BrowserProof
+	}
+	if in.SilentSignIn && browserProof != "" {
+		if approval := silentApproval(ctx, c, in, browserProof); approval != nil {
+			return GuardResult{Status: 200, Approved: approval}
+		}
+	}
+	step, err := c.Start(in.Action, in.User, StartOptions{
+		Details: norm, ReferenceID: in.ReferenceID, IP: in.IP, UserAgent: in.UserAgent, NoEnroll: in.NoEnroll,
+		BrowserProof: browserProof,
+	})
 	if err != nil {
 		return errorResult(err)
 	}
 	return issue(*step, guardClaims{})
+}
+
+// silentApproval asks TouchQue whether this known browser may sign in
+// without the phone. It fails closed: only an answer of exactly
+// prompt: false approves; any error (network, 4xx, 5xx, a server without
+// silent sign-ins) returns nil, which means "ask as usual".
+func silentApproval(ctx context.Context, c *Client, in GuardInput, browserProof string) *Approval {
+	res, err := c.Risk.Check(ctx, RiskCheckOptions{
+		ExternalUsername: in.User, Type: in.Action, ClientIP: in.IP, UserAgent: in.UserAgent,
+		BrowserProof: browserProof, MaxAgeSeconds: in.SilentSignInMaxAgeSeconds,
+	})
+	if err != nil || res == nil || res.Prompt {
+		return nil
+	}
+	return &Approval{
+		RequestID: "silent", User: in.User, Action: in.Action,
+		Assurance: &Assurance{PhishingResistant: false, Method: "silent"}, ConfirmedVia: "SILENT",
+		Reasons: res.Reasons,
+	}
+}
+
+// withSilentSignIn adds what an adapter passes for silent sign-ins: the
+// X-TouchQue-Browser header, read only when the option is on.
+func withSilentSignIn(in GuardInput, header func(string) string, on bool, maxAgeSeconds *int) GuardInput {
+	if !on {
+		return in
+	}
+	in.SilentSignIn = true
+	in.SilentSignInMaxAgeSeconds = maxAgeSeconds
+	in.BrowserProof = header(GuardBrowserHeader)
+	return in
 }
 
 func errorResult(err error) GuardResult {

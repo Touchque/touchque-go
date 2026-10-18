@@ -38,6 +38,13 @@ type LoginRequestOptions struct {
 	// (never truncates) anything outside those limits. Build it from
 	// server-side state, never from browser input.
 	Details []LoginDetail
+	// BrowserProof (silent sign-ins): the browser's device-bound key proof,
+	// exactly as the browser sent it (the X-TouchQue-Browser header, made by
+	// @touchque/web). When the user approves this request on the phone (or
+	// with a passkey), TouchQue remembers the browser, so a later Risk.Check
+	// can let the same browser in without asking. Pass it through untouched;
+	// an invalid proof only means "a browser TouchQue does not know".
+	BrowserProof string
 }
 
 // Request sends a 2FA login/approval request to the user's mobile device.
@@ -81,6 +88,9 @@ func (l *LoginResource) RequestWithOptions(opts LoginRequestOptions) (*LoginRequ
 	}
 	if len(opts.Details) > 0 {
 		payload["details"] = opts.Details
+	}
+	if opts.BrowserProof != "" {
+		payload["browserProof"] = opts.BrowserProof
 	}
 	res, err := l.http.post("/login/request", payload)
 	if err != nil {

@@ -8,6 +8,9 @@ type Client struct {
 	Webhook  *WebhookResource
 	Offline  *OfflineResource
 	Actions  *ActionsResource
+	// Risk is silent sign-ins: should this sign-in ask the phone, and which
+	// browsers TouchQue knows.
+	Risk *RiskResource
 
 	apiSecret string
 }
@@ -49,6 +52,7 @@ func newClient(config *Config) *Client {
 		Webhook:   newWebhookResource(config),
 		Offline:   newOfflineResource(httpWrapper),
 		Actions:   newActionsResource(httpWrapper),
+		Risk:      newRiskResource(httpWrapper),
 		apiSecret: config.APISecret,
 	}
 }

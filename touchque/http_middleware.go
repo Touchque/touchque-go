@@ -25,6 +25,17 @@ type RequireOptions struct {
 	// this explicitly behind a reverse proxy, from your trusted
 	// X-Forwarded-For hop; never the leftmost hop, which the client controls).
 	IP func(*http.Request) string
+	// SilentSignIn (default off): a new attempt whose browser sent its
+	// device-bound key proof (X-TouchQue-Browser, added by @touchque/web with
+	// browserKey: true) first asks TouchQue whether anything about it is new.
+	// If nothing is, next runs at once with no push (the approval's
+	// Assurance.Method is "silent", with Reasons). Otherwise, and on any
+	// error, the usual push starts and its approval makes the browser known.
+	SilentSignIn bool
+	// SilentSignInMaxAgeSeconds is your own limit on how long ago the last
+	// phone approval in that browser may be (0 = always ask). nil leaves it
+	// to TouchQue, which never goes beyond its own limit (7 days).
+	SilentSignInMaxAgeSeconds *int
 }
 
 type approvalContextKey struct{}
@@ -100,11 +111,12 @@ func Require(client *Client, action string, next http.Handler, opts RequireOptio
 		}
 		token, offline, code, codeType := guardInputFromRequest(r)
 
-		result := runGuard(client, GuardInput{
+		in := withSilentSignIn(GuardInput{
 			User: userOf(r), Action: action, Details: details, ReferenceID: referenceID,
 			IP: ipOf(r), UserAgent: r.UserAgent(),
 			Token: token, Offline: offline == "1", Code: code, CodeType: codeType,
-		})
+		}, r.Header.Get, opts.SilentSignIn, opts.SilentSignInMaxAgeSeconds)
+		result := runGuardContext(r.Context(), client, in)
 
 		if result.Approved != nil {
 			ctx := context.WithValue(r.Context(), approvalContextKey{}, result.Approved)

@@ -7,6 +7,31 @@ Go modules are versioned via git tags (e.g. `touchque-go/v1.1.0`), not a
 manifest field — the version below corresponds to the tag this SDK should
 be released under next.
 
+## [3.5.0] — 2026-10-18 — Silent sign-ins
+
+### Added
+- **Silent sign-ins.** Stop asking the phone again and again when nothing about a sign-in is new. TouchQue's
+  risk engine decides; the push is skipped only when it says so.
+  - `tq.Risk.Check(ctx, RiskCheckOptions{ExternalUsername, Type, ClientIP, UserAgent, BrowserProof, MaxAgeSeconds})` →
+    `*RiskCheckResult{Prompt, Reasons, Assurance, SilentMode}` (`RiskReason{Code, Text}`). Sends nothing to the
+    phone. Read fail-closed: `Prompt` is `false` only when the API answered the boolean `false`; malformed
+    `reasons` become `[]`, a missing or unknown `assurance` is `"normal"`. `MaxAgeSeconds` is a `*int` so `0`
+    (always ask) can be sent.
+  - `tq.Risk.Browsers(ctx, RiskBrowsersOptions{ExternalUsername})` and
+    `tq.Risk.ForgetBrowsers(ctx, ForgetBrowsersOptions{ExternalUsername, Thumbprint})`: the browsers TouchQue knows
+    for a user, and forgetting one (`Thumbprint`) or all of them.
+  - `LoginRequestOptions.BrowserProof` and `StartOptions.BrowserProof`: the browser's device-bound key proof
+    (`X-TouchQue-Browser`, made by `@touchque/web` 1.4.0), passed through untouched; once the request is approved,
+    TouchQue knows that browser.
+  - `SilentSignIn` option (default off) on `RequireOptions`, `RelayOptions` (POST /login) and `GuardInput` (with
+    `GuardInput.BrowserProof`): a new attempt carrying the `X-TouchQue-Browser` header is checked first;
+    `prompt: false` approves it at once with no push (`Assurance.Method == "silent"`, `ConfirmedVia == "SILENT"`,
+    `RequestID == "silent"`, `Approval.Reasons`; the relay's `OnAuthenticated` gets `Via == ViaSilent`). Otherwise,
+    and on any error in the check, the usual push starts with the proof attached. `SilentSignInMaxAgeSeconds` sets
+    your own limit on the age of the last phone approval. Polling with the token never checks again.
+  - `GuardBrowserHeader` (`X-TouchQue-Browser`), `ViaSilent`.
+- `Require` and the relay's POST /login pass the incoming request's context to the silent check.
+
 ## [3.4.0] — 2026-10-18
 
 ### Added

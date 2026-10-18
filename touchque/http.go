@@ -2,6 +2,7 @@ package touchque
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -15,7 +16,7 @@ import (
 	"time"
 )
 
-const sdkVersion = "3.4.0"
+const sdkVersion = "3.5.0"
 
 type httpClient struct {
 	config *Config
@@ -54,6 +55,11 @@ func buildQuery(params map[string]string) string {
 }
 
 func (h *httpClient) post(endpoint string, body interface{}) (map[string]interface{}, error) {
+	return h.postCtx(context.Background(), endpoint, body)
+}
+
+// postCtx is post bound to ctx: cancelling ctx aborts the request.
+func (h *httpClient) postCtx(ctx context.Context, endpoint string, body interface{}) (map[string]interface{}, error) {
 	var bodyBytes []byte
 	var err error
 	if body != nil {
@@ -64,7 +70,7 @@ func (h *httpClient) post(endpoint string, body interface{}) (map[string]interfa
 	} else {
 		bodyBytes = []byte("{}")
 	}
-	return h.send("POST", endpoint, bodyBytes)
+	return h.sendCtx(ctx, "POST", endpoint, bodyBytes)
 }
 
 func (h *httpClient) get(endpoint string) (map[string]interface{}, error) {
@@ -72,7 +78,12 @@ func (h *httpClient) get(endpoint string) (map[string]interface{}, error) {
 }
 
 func (h *httpClient) getWithQuery(endpoint string, params map[string]string) (map[string]interface{}, error) {
-	return h.send("GET", endpoint+buildQuery(params), nil)
+	return h.getWithQueryCtx(context.Background(), endpoint, params)
+}
+
+// getWithQueryCtx is getWithQuery bound to ctx: cancelling ctx aborts the request.
+func (h *httpClient) getWithQueryCtx(ctx context.Context, endpoint string, params map[string]string) (map[string]interface{}, error) {
+	return h.sendCtx(ctx, "GET", endpoint+buildQuery(params), nil)
 }
 
 func (h *httpClient) delete(endpoint string) (map[string]interface{}, error) {
@@ -80,7 +91,11 @@ func (h *httpClient) delete(endpoint string) (map[string]interface{}, error) {
 }
 
 func (h *httpClient) send(method, pathWithQuery string, bodyBytes []byte) (map[string]interface{}, error) {
-	_, respBody, resp, err := h.do(method, pathWithQuery, bodyBytes)
+	return h.sendCtx(context.Background(), method, pathWithQuery, bodyBytes)
+}
+
+func (h *httpClient) sendCtx(ctx context.Context, method, pathWithQuery string, bodyBytes []byte) (map[string]interface{}, error) {
+	_, respBody, resp, err := h.doCtx(ctx, method, pathWithQuery, bodyBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -119,13 +134,20 @@ func (h *httpClient) sendArray(method, pathWithQuery string, bodyBytes []byte) (
 }
 
 func (h *httpClient) do(method, pathWithQuery string, bodyBytes []byte) (int, []byte, *http.Response, error) {
+	return h.doCtx(context.Background(), method, pathWithQuery, bodyBytes)
+}
+
+func (h *httpClient) doCtx(ctx context.Context, method, pathWithQuery string, bodyBytes []byte) (int, []byte, *http.Response, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	reqURL := h.config.BaseURL + pathWithQuery
 
 	var reader io.Reader
 	if bodyBytes != nil {
 		reader = bytes.NewBuffer(bodyBytes)
 	}
-	req, err := http.NewRequest(method, reqURL, reader)
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, reader)
 	if err != nil {
 		return 0, nil, nil, err
 	}

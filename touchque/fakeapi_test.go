@@ -123,6 +123,20 @@ func (f *fakeAPI) calls() []map[string]interface{} {
 	return out
 }
 
+// lastCheck is the body of the last POST /risk/check (nil when there was none).
+func (f *fakeAPI) lastCheck() map[string]interface{} {
+	f.t.Helper()
+	resp, err := http.Get(f.baseURL + "/__test/last-check")
+	if err != nil {
+		f.t.Fatalf("last-check: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var out map[string]interface{}
+	_ = json.Unmarshal(raw, &out)
+	return out
+}
+
 func (f *fakeAPI) client(t *testing.T) *Client {
 	t.Helper()
 	return NewClient(&Config{APIKey: "tq_test_key", APISecret: "test_secret", BaseURL: f.baseURL, TimeoutMs: 5000})

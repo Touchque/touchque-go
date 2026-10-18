@@ -81,6 +81,10 @@ type Approval struct {
 	// actions until the phone re-confirms (EventApprovalReconfirmed), and
 	// EventApprovalRevoked means end it.
 	ShieldFields
+	// Reasons is set on silent sign-ins only (Assurance.Method "silent",
+	// ConfirmedVia "SILENT", RequestID "silent"): nothing was sent to the
+	// phone, and these say why TouchQue let this known browser in.
+	Reasons []RiskReason `json:"reasons,omitempty"`
 }
 
 // StartOptions configures Start.
@@ -95,6 +99,10 @@ type StartOptions struct {
 	// NoEnroll: set true to get StepEnroll{} (no QR) instead of issuing one,
 	// when the user has no linked phone.
 	NoEnroll bool
+	// BrowserProof (silent sign-ins): the browser's device-bound key proof
+	// (X-TouchQue-Browser), passed through untouched. Once the user approves,
+	// TouchQue knows this browser.
+	BrowserProof string
 }
 
 // normalizeDetails matches the API's own normalization: nil in, nil out.
@@ -130,7 +138,7 @@ func (c *Client) Start(action, user string, opts StartOptions) (*Step, error) {
 	norm := normalizeDetails(opts.Details)
 	res, err := c.Login.RequestWithOptions(LoginRequestOptions{
 		ExternalUsername: user, Type: action, ReferenceID: opts.ReferenceID,
-		ClientIP: opts.IP, UserAgent: opts.UserAgent, Details: norm,
+		ClientIP: opts.IP, UserAgent: opts.UserAgent, Details: norm, BrowserProof: opts.BrowserProof,
 	})
 	if err == nil {
 		var canary *Canary

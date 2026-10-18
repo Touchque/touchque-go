@@ -30,7 +30,8 @@ import (
 //
 //	POST   /enroll/start                  (auth required) -> GenerateSecretResponse
 //	GET    /enroll/status                 (auth required) -> {"linked", "used", "deviceId"}
-//	POST   /login                         (pre-auth) -> 202 {"touchque": step, "token"} until approved (same contract as Require)
+//	POST   /login                         (pre-auth) -> 202 {"touchque": step, "token"} until approved (same contract as Require;
+//	                                      with SilentSignIn, a known browser is approved at once)
 //	POST   /offline/challenge             (pre-auth, body.externalUsername) -> QR for a phone with no internet
 //	POST   /offline/verify                (pre-auth, body.challengeId/code)
 //	POST   /offline/totp                  (pre-auth, body.externalUsername/code) -> time-based code fallback
@@ -172,6 +173,20 @@ type RelayOptions struct {
 	// explicitly behind a reverse proxy, from your trusted X-Forwarded-For
 	// hop).
 	IP func(*http.Request) string
+
+	// SilentSignIn for POST /login (default off): a new sign-in whose browser
+	// sent its device-bound key proof (X-TouchQue-Browser, added by
+	// @touchque/web with browserKey: true) first asks TouchQue whether
+	// anything about it is new. If nothing is, it succeeds at once with no
+	// push (OnAuthenticated gets Via ViaSilent; the answer's assurance.method
+	// is "silent"). Otherwise, and on any error, the usual push starts and its
+	// approval makes the browser known. Set LoginUser too: the user must have
+	// passed your password step.
+	SilentSignIn bool
+	// SilentSignInMaxAgeSeconds is your own limit on how long ago the last
+	// phone approval in that browser may be (0 = always ask). nil leaves it
+	// to TouchQue, which never goes beyond its own limit (7 days).
+	SilentSignInMaxAgeSeconds *int
 }
 
 // AuthenticatedVia says which relay route authenticated the user.
@@ -182,6 +197,9 @@ const (
 	ViaPasskey     AuthenticatedVia = "passkey"
 	ViaOffline     AuthenticatedVia = "offline"
 	ViaOfflineTotp AuthenticatedVia = "offline-totp"
+	// ViaSilent: a silent sign-in (RelayOptions.SilentSignIn) — a known
+	// browser, nothing sent to the phone; RequestID is "silent".
+	ViaSilent AuthenticatedVia = "silent"
 )
 
 // AuthenticatedInfo is passed to RelayOptions.OnAuthenticated.
@@ -515,14 +533,14 @@ func (h *relayHandler) login(w http.ResponseWriter, r *http.Request, body relayB
 	// / first-time QR / offline QR) until approved; the page re-sends with
 	// X-TouchQue-Token.
 	token, offline, code, codeType := guardInputFromRequest(r)
-	in := GuardInput{
+	in := withSilentSignIn(GuardInput{
 		User: user, Action: h.actionType, Details: h.details(r),
 		IP: h.ipOf(r), UserAgent: r.UserAgent(),
 		Token: token, Offline: offline == "1", Code: code, CodeType: codeType,
 		// Pre-auth: a typed username proves nothing, so no linking QR unless
 		// LoginUser ties this route to the password step.
 		NoEnroll: h.opts.LoginUser == nil,
-	}
+	}, r.Header.Get, h.opts.SilentSignIn, h.opts.SilentSignInMaxAgeSeconds)
 	// Polling an approval already sent is not a new attempt: it has its own,
 	// larger per-IP budget and never uses the user's push budget.
 	if isStatusPoll(h.client, in) {
@@ -532,7 +550,7 @@ func (h *relayHandler) login(w http.ResponseWriter, r *http.Request, body relayB
 	} else if !h.allow(w, r, "login", user) {
 		return
 	}
-	result := runGuard(h.client, in)
+	result := runGuardContext(r.Context(), h.client, in)
 	if result.Approved == nil {
 		if result.Body.Touchque.RetryAfter > 0 {
 			w.Header().Set("Retry-After", strconv.Itoa(result.Body.Touchque.RetryAfter))
@@ -547,6 +565,8 @@ func (h *relayHandler) login(w http.ResponseWriter, r *http.Request, body relayB
 		via = ViaOfflineTotp
 	case "OFFLINE_CODE":
 		via = ViaOffline
+	case "SILENT":
+		via = ViaSilent
 	}
 	if err := h.authenticated(w, r, AuthenticatedInfo{ExternalUsername: user, RequestID: result.Approved.RequestID, Via: via}); err != nil {
 		sendAuthResultError(w, err)

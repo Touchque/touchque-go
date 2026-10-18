@@ -84,7 +84,7 @@ mux.Handle("/touchque/", http.StripPrefix("/touchque", touchque.NewRelayHandler(
 | Route | Notes |
 | --- | --- |
 | `POST /enroll/start`, `GET /enroll/status` | signed-in user only; never replaces an already linked phone (409 `already_linked`) |
-| `POST /login` | same two-phase contract as `Require`: `202 {"touchque": step, "token"}` until approved |
+| `POST /login` | same two-phase contract as `Require`: `202 {"touchque": step, "token"}` until approved; with `SilentSignIn`, a known browser is approved at once (see Silent sign-ins) |
 | `POST /offline/challenge`, `/offline/verify`, `/offline/totp` | off (403 `OFFLINE_REQUIRES_FIRST_FACTOR`) unless `LoginUser` or `AllowOfflineWithoutFirstFactor` is set |
 | `POST /passkey/authenticate/options`, `/passkey/authenticate/verify` | passwordless sign-in |
 | `POST /passkey/login/options`, `/passkey/login/verify` | approve a pending sign-in with a passkey |
@@ -201,6 +201,70 @@ was shared or the phone remote-controlled when the user tapped Approve. Dependin
 sign-in and sends a beacon to it, so a real-time phishing proxy in front of your site shows up as itself: the
 approval is refused (`reason: phishing_origin`) and the phone warns the user. Allow the canary host in your
 Content-Security-Policy (`img-src` and `connect-src`).
+
+## Silent sign-ins (stop asking when nothing is new)
+
+A user who approved on their phone in this browser a little while ago, from the same phone, network and country,
+with no risk signal since, does not need another push. TouchQue's risk engine decides; your server only skips the
+push when it says so.
+
+1. In the browser, `@touchque/web` 1.4.0 with `createTouchQueWeb({ browserKey: true })` keeps a non-extractable
+   key for your site and sends a fresh, signed proof of it in the `X-TouchQue-Browser` header
+   (`touchque.GuardBrowserHeader`).
+2. On the server, turn on `SilentSignIn`:
+
+```go
+mux.Handle("/login/2fa", touchque.Require(tq, "LOGIN", signInHandler, touchque.RequireOptions{
+    User:         func(r *http.Request) string { return passwordVerifiedUser(r) },
+    SilentSignIn: true,
+}))
+
+func signInHandler(w http.ResponseWriter, r *http.Request) {
+    approval, _ := touchque.ApprovalFromContext(r.Context())
+    // approval.Assurance.Method is "silent" when no push was needed; approval.Reasons say why.
+}
+
+mux.Handle("/touchque/", http.StripPrefix("/touchque", touchque.NewRelayHandler(tq, touchque.RelayOptions{
+    UserID:       func(r *http.Request) string { return sessionUser(r) },
+    LoginUser:    func(r *http.Request) string { return passwordVerifiedUser(r) },
+    SilentSignIn: true, // SilentSignInMaxAgeSeconds sets your own limit
+})))
+```
+
+With it on, a new attempt that carries the header first calls `tq.Risk.Check`. Only an answer of exactly
+`prompt: false` approves it at once, with nothing sent to the phone: the `Approval` has
+`Assurance{Method: "silent", PhishingResistant: false}`, `ConfirmedVia: "SILENT"`, `RequestID: "silent"` and
+`Reasons` (`known_browser`, `recent_approval`, `same_phone`, `familiar_network`, `no_risk_signal`); the relay calls
+`OnAuthenticated` with `Via: touchque.ViaSilent`. Anything else, and any error in the check, starts the usual push
+with the proof attached, so its approval makes the browser known. Polling with the token never checks again.
+`SilentSignInMaxAgeSeconds` (`*int`, seconds; `0` = always ask) sets your own limit on how long ago the last phone
+approval in that browser may be.
+
+TouchQue only lets a sign-in through silently when all of this holds: the browser proved its key and was approved
+on the phone (a confirmed push, not one approved during a call, or a passkey) within your limit and at most 7 days
+ago, by the phone that is linked now; the country and the network were seen in the user's earlier approved
+sign-ins; the risk engine allows it with no risk signal; and the action is an everyday one. A critical action always
+asks. In `shadow` mode (`SilentMode`) it always asks and the reasons say what would have happened.
+
+Without the adapters:
+
+```go
+proof := r.Header.Get(touchque.GuardBrowserHeader)
+risk, err := tq.Risk.Check(r.Context(), touchque.RiskCheckOptions{
+    ExternalUsername: user, Type: "LOGIN", ClientIP: ip, UserAgent: r.UserAgent(), BrowserProof: proof,
+})
+if err == nil && !risk.Prompt {
+    return openSession(user) // risk.Reasons say why
+}
+step, err := tq.Start("LOGIN", user, touchque.StartOptions{IP: ip, BrowserProof: proof}) // the approval makes the browser known
+
+list, err := tq.Risk.Browsers(ctx, touchque.RiskBrowsersOptions{ExternalUsername: user})               // for an "approved browsers" list
+res, err := tq.Risk.ForgetBrowsers(ctx, touchque.ForgetBrowsersOptions{ExternalUsername: user})        // all; or set Thumbprint for one
+```
+
+`Login.RequestWithOptions` takes `BrowserProof` too. Forget a user's browsers after a password reset or a "sign out
+everywhere". `Risk.Check` reads the answer fail-closed: `Prompt` is `false` only when TouchQue answered the boolean
+`false`.
 
 ## Verifying the device proof (no need to trust TouchQue)
 

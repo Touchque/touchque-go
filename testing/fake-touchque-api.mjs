@@ -11,7 +11,13 @@
 // /__test/reject {id?}, /__test/escalate {id?} (Vishing Shield: the phone tap
 // moved the request to a passkey), /__test/reconfirm {id?}, /__test/revoke
 // {id?, reason?}, /__test/opts {...} (canary: true adds `canary` to new
-// requests), /__test/reset; GET /__test/calls
+// requests; silent: true makes POST /risk/check answer prompt:false for an
+// everyday action), /__test/reset; GET /__test/calls, GET /__test/last-check
+// (the body of the last POST /risk/check, or null)
+//
+// Silent sign-ins: POST /login/request remembers `browserProof`; approving
+// such a request (not provisional) makes that browser known to
+// GET /risk/browsers until POST /risk/browsers/forget.
 
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -26,6 +32,7 @@ function reset() {
     actions: new Map([['LOGIN', { critical: false }], ['SEND_MONEY', { critical: true }], ['PASSKEY_ENROLL', { critical: true }]]),
     usedEnrollApprovals: new Set(),
     challenges: new Map(), usedNonces: new Set(),
+    browsers: [], lastCheck: null,
   };
 }
 reset();
@@ -33,6 +40,44 @@ reset();
 const toPairs = (d) => (!d ? null : Array.isArray(d) ? d.map((x) => ({ label: String(x.label), value: String(x.value) }))
   : Object.entries(d).map(([label, value]) => ({ label, value: String(value) })));
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
+const b64u = (buf) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+// RFC 7638 thumbprint of the proof's key, like the API (object or base64url JSON
+// string). The fake does not check the signature; an unreadable proof gets a
+// stable stand-in so tests can still tell browsers apart.
+function browserThumbprint(proof) {
+  try {
+    const p = typeof proof === 'string' ? JSON.parse(Buffer.from(proof, 'base64url').toString('utf8')) : proof;
+    const { crv, kty, x, y } = p.jwk;
+    if (typeof x !== 'string' || typeof y !== 'string') throw new Error('no key');
+    return b64u(crypto.createHash('sha256').update(JSON.stringify({ crv, kty, x, y })).digest());
+  } catch {
+    return b64u(crypto.createHash('sha256').update(typeof proof === 'string' ? proof : JSON.stringify(proof)).digest());
+  }
+}
+// The engine's English texts for the reason codes the fake answers with.
+const REASON_TEXT = {
+  known_browser: 'This browser proved its device-bound key',
+  recent_approval: 'Approved on the phone in this browser 3 h ago',
+  same_phone: 'The same phone approved this browser',
+  familiar_network: 'Country and network seen in earlier approved sign-ins',
+  no_risk_signal: 'No risk signal',
+  no_browser_key: 'No device-bound browser key was presented',
+  new_browser: 'This browser has not been approved on the phone for this account',
+  critical_action: 'The action is critical',
+  phone_not_linked: 'No phone is linked to this account',
+};
+const reasons = (...codes) => codes.map((code) => ({ code, text: REASON_TEXT[code] }));
+// Like the API: only a real second factor makes a browser known (a confirmed push that is not provisional, a passkey).
+function rememberBrowser(r) {
+  if (!r.browserProof || r.status !== 'CONFIRMED' || r.provisional) return;
+  const thumbprint = browserThumbprint(r.browserProof);
+  const now = new Date().toISOString();
+  const lastMfaMethod = r.confirmedVia === 'WEBAUTHN' ? 'passkey' : 'push';
+  const known = state.browsers.find((x) => x.user === r.user && x.thumbprint === thumbprint);
+  if (known) Object.assign(known, { lastMfaAt: now, lastMfaMethod, lastSeenAt: now });
+  else state.browsers.push({ user: r.user, thumbprint, label: 'Browser', createdAt: now, lastMfaAt: now, lastMfaMethod, lastSeenAt: now, lastSilentAt: null });
+}
 
 function verifySignature(req, rawBody) {
   const key = req.headers['x-api-key'];
@@ -71,6 +116,7 @@ route('POST', '/__test/link', (req, res, b) => { state.linked.add(b.user); send(
 route('POST', '/__test/opts', (req, res, b) => { state.opts = { ...state.opts, ...b }; send(res, 200, state.opts); });
 route('POST', '/__test/approve', (req, res, b) => {
   const r = pick(b.id); r.status = 'CONFIRMED'; r.confirmedVia = b.via || 'DEVICE'; r.provisional = Boolean(b.provisional);
+  rememberBrowser(r);
   send(res, 200, { id: r.id });
 });
 // Like the API's Vishing Shield: still PENDING, now passkey-only, the phone was refused.
@@ -79,6 +125,7 @@ route('POST', '/__test/reconfirm', (req, res, b) => { const r = pick(b.id); r.re
 route('POST', '/__test/revoke', (req, res, b) => { const r = pick(b.id); r.revokedAt = new Date().toISOString(); r.revokeReason = b.reason || 'COACHED'; send(res, 200, { id: r.id }); });
 route('POST', '/__test/reject', (req, res, b) => { const r = pick(b.id); r.status = 'REJECTED'; send(res, 200, { id: r.id }); });
 route('GET', '/__test/calls', (req, res) => send(res, 200, state.calls));
+route('GET', '/__test/last-check', (req, res) => send(res, 200, state.lastCheck));
 
 // ── API ──
 route('POST', '/login/request', (req, res, b) => {
@@ -98,6 +145,7 @@ route('POST', '/login/request', (req, res, b) => {
     status: 'PENDING', consumed: false,
     challengeCode: state.opts.passkeyOnly ? undefined : (state.opts.numberMatch || action.critical ? '47' : undefined),
     requiresPasskey: state.opts.passkeyOnly || undefined,
+    browserProof: b.browserProof || undefined,
   };
   state.requests.push(r);
   send(res, 200, {
@@ -142,6 +190,34 @@ route('POST', '/login/([^/]+)/report-fraud', (req, res, b, m) => {
   send(res, 200, { reported: true, alreadyReported, requestId: r.id });
 });
 route('POST', '/login/recovery', (req, res, b) => send(res, 200, { success: true }));
+// Silent sign-ins. Sends nothing to the phone; never 404 for an unknown user (that would reveal who has 2FA).
+route('POST', '/risk/check', (req, res, b) => {
+  state.lastCheck = b;
+  if (typeof b.externalUsername !== 'string' || !b.externalUsername) return send(res, 400, { code: 'invalid_request', error: 'externalUsername is required' });
+  if (state.opts.rateLimited) return send(res, 429, { code: 'rate_limited', error: 'too_many_login_requests', retryAfter: 60 }, { 'Retry-After': '60' });
+  const ask = (assurance, ...codes) => send(res, 200, { prompt: true, reasons: reasons(...codes), assurance, silentMode: 'enforce' });
+  if (!state.linked.has(b.externalUsername)) return ask('normal', 'phone_not_linked');
+  if ((state.actions.get(b.type || 'LOGIN') || {}).critical) return ask('normal', 'critical_action');
+  if (state.opts.silent) {
+    return send(res, 200, {
+      prompt: false, reasons: reasons('known_browser', 'recent_approval', 'same_phone', 'familiar_network', 'no_risk_signal'), assurance: 'high', silentMode: 'enforce',
+    });
+  }
+  return ask('normal', b.browserProof ? 'new_browser' : 'no_browser_key');
+});
+const browserView = ({ user, ...rest }) => rest;
+route('GET', '/risk/browsers', (req, res) => {
+  const user = new URL(req.url, 'http://x').searchParams.get('externalUsername');
+  if (!user) return send(res, 400, { code: 'invalid_request', error: 'externalUsername is required' });
+  send(res, 200, { browsers: state.browsers.filter((x) => x.user === user).map(browserView) });
+});
+route('POST', '/risk/browsers/forget', (req, res, b) => {
+  if (typeof b.externalUsername !== 'string' || !b.externalUsername) return send(res, 400, { code: 'invalid_request', error: 'externalUsername is required' });
+  const gone = (x) => x.user === b.externalUsername && (!b.thumbprint || x.thumbprint === b.thumbprint);
+  const forgotten = state.browsers.filter(gone).length;
+  state.browsers = state.browsers.filter((x) => !gone(x));
+  send(res, 200, { forgotten });
+});
 route('POST', '/auth/generate-secret', (req, res, b) => {
   const u = b.externalUsername;
   if (state.linked.has(u)) return send(res, 409, { error: 'already linked' });
