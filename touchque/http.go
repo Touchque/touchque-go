@@ -16,8 +16,7 @@ import (
 	"time"
 )
 
-const sdkVersion = "3.5.0"
-
+const sdkVersion = "4.0.0"
 type httpClient struct {
 	config *Config
 	client *http.Client
@@ -71,6 +70,27 @@ func (h *httpClient) postCtx(ctx context.Context, endpoint string, body interfac
 		bodyBytes = []byte("{}")
 	}
 	return h.sendCtx(ctx, "POST", endpoint, bodyBytes)
+}
+
+// put and patch send a JSON body like post.
+func (h *httpClient) put(endpoint string, body interface{}) (map[string]interface{}, error) {
+	return h.sendJSON("PUT", endpoint, body)
+}
+
+func (h *httpClient) patch(endpoint string, body interface{}) (map[string]interface{}, error) {
+	return h.sendJSON("PATCH", endpoint, body)
+}
+
+func (h *httpClient) sendJSON(method, endpoint string, body interface{}) (map[string]interface{}, error) {
+	bodyBytes := []byte("{}")
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		bodyBytes = b
+	}
+	return h.send(method, endpoint, bodyBytes)
 }
 
 func (h *httpClient) get(endpoint string) (map[string]interface{}, error) {
@@ -196,6 +216,9 @@ func apiErrorFrom(resp *http.Response, result map[string]interface{}) *APIError 
 	}
 	if r, ok := result["reason"].(string); ok {
 		apiErr.Reason = r
+	}
+	if cc, ok := result["caseCode"].(string); ok {
+		apiErr.CaseCode = cc
 	}
 	if a, ok := result["attemptsLeft"].(float64); ok {
 		apiErr.AttemptsLeft = int(a)

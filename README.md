@@ -4,7 +4,7 @@ The official Go server SDK for [TouchQue](https://touchque.com) — biometric pu
 2FA, passkeys, and offline approval codes, added to any `net/http` backend
 with one middleware wrap per route.
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/Touchque/touchque-go/v3.svg)](https://pkg.go.dev/github.com/Touchque/touchque-go/v3)
+[![Go Reference](https://pkg.go.dev/badge/github.com/Touchque/touchque-go/v4.svg)](https://pkg.go.dev/github.com/Touchque/touchque-go/v4)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 📘 Full docs: **[authenticator.touchque.com/docs](https://authenticator.touchque.com/docs)**
@@ -12,7 +12,7 @@ with one middleware wrap per route.
 ## Install
 
 ```bash
-go get github.com/Touchque/touchque-go/v3
+go get github.com/Touchque/touchque-go/v4
 ```
 
 ## Setup
@@ -30,7 +30,7 @@ left empty.
 ## Quick start (net/http)
 
 ```go
-import "github.com/Touchque/touchque-go/v3/touchque"
+import "github.com/Touchque/touchque-go/v4/touchque"
 
 tq := touchque.NewClient(&touchque.Config{})
 
@@ -86,7 +86,7 @@ mux.Handle("/touchque/", http.StripPrefix("/touchque", touchque.NewRelayHandler(
 | `POST /enroll/start`, `GET /enroll/status` | signed-in user only; never replaces an already linked phone (409 `already_linked`) |
 | `POST /login` | same two-phase contract as `Require`: `202 {"touchque": step, "token"}` until approved; with `SilentSignIn`, a known browser is approved at once (see Silent sign-ins) |
 | `POST /offline/challenge`, `/offline/verify`, `/offline/totp` | off (403 `OFFLINE_REQUIRES_FIRST_FACTOR`) unless `LoginUser` or `AllowOfflineWithoutFirstFactor` is set |
-| `POST /passkey/authenticate/options`, `/passkey/authenticate/verify` | passwordless sign-in |
+| `POST /passkey/authenticate/options`, `/passkey/authenticate/verify` | passwordless sign-in (no `email`: any passkey of your site, for passkey autofill) |
 | `POST /passkey/login/options`, `/passkey/login/verify` | approve a pending sign-in with a passkey |
 | `POST /passkey/register/options`, `/passkey/register/verify`, `GET /passkey/credentials`, `DELETE /passkey/credentials/{id}` | signed-in user only |
 
@@ -202,6 +202,27 @@ sign-in and sends a beacon to it, so a real-time phishing proxy in front of your
 approval is refused (`reason: phishing_origin`) and the phone warns the user. Allow the canary host in your
 Content-Security-Policy (`img-src` and `connect-src`).
 
+## TouchQue Actions (your code in the approval pipeline)
+
+Alerts, step-ups and refusals by country, local time, role or amount, passkeys
+for admins — from a template or a few lines of JavaScript, replayed against your
+real recent sign-ins before they go live. Full guide: [ACTIONS.md](../ACTIONS.md).
+
+```go
+client.Actions.Deploy("night-alert", touchque.DeployActionOptions{Trigger: "approval.decided",
+	Template: &touchque.ActionTemplateRef{ID: "alert", Params: map[string]interface{}{"channel": "slack",
+		"when": map[string]interface{}{"countries": []string{"TR"}, "hours": map[string]interface{}{"from": 0, "to": 6}}}}})
+
+draft := `exports.onExecute = async (event, api) => { if (event.context?.amount > 10000) api.stepUp("Over 10,000"); };`
+report, _ := client.Actions.DryRun(touchque.DryRunActionOptions{ActionDraft: touchque.ActionDraft{Trigger: "login.request", Code: draft}})
+_ = report.Transitions // map["push→number_match"]3
+client.Actions.Deploy("big-transfers", touchque.DeployActionOptions{Trigger: "login.request", Code: draft})
+```
+
+Give Actions what only your server knows with `RequireOptions.Context` (never
+shown on the phone). Loosening calls need a capability an admin approves on
+their phone. Action types moved to `client.ActionTypes` in v4.
+
 ## Silent sign-ins (stop asking when nothing is new)
 
 A user who approved on their phone in this browser a little while ago, from the same phone, network and country,
@@ -265,6 +286,72 @@ res, err := tq.Risk.ForgetBrowsers(ctx, touchque.ForgetBrowsersOptions{ExternalU
 `Login.RequestWithOptions` takes `BrowserProof` too. Forget a user's browsers after a password reset or a "sign out
 everywhere". `Risk.Check` reads the answer fail-closed: `Prompt` is `false` only when TouchQue answered the boolean
 `false`.
+
+## Never Locked Out (lost, dead or new phone)
+
+A user whose phone is gone moves to a new phone without a help desk. Colleagues they named beforehand vouch on their own
+phones, each typing a number the user reads them on a call; then a cooling-off (default 60 minutes) lets the old phone, any
+voucher or an admin stop it. The risk engine can refuse it or ask for more vouchers, and for 24 hours afterwards critical
+actions are refused. It is an option: offer it next to passkeys and the old phone's transfer, never as the only way. Every
+step is a hash-chained receipt (`receipts`); a voucher's step carries the signature of their phone's hardware key.
+
+```go
+// Settings page, after an approval on the user's phone:
+tq.Recovery.SetVouchers(ctx, user, []string{"bo@acme.com", "cy@acme.com"})
+
+// "I lost my phone", after the password:
+r, err := tq.Recovery.Start(ctx, touchque.StartRecoveryOptions{ExternalUsername: user, ClientIP: ip, DisplayName: "Ada", FallbackVouchers: admins})
+showQR(r.BindURI)                        // the TouchQue app on the new phone scans it
+now, _ := tq.Recovery.Status(ctx, r.RecoveryID) // each voucher's Code to read to them
+// now.Status: AWAITING_DEVICE -> VOUCHING -> COOLING -> COMPLETED (or VETOED / EXPIRED / FAILED)
+
+tq.Recovery.Veto(ctx, r.RecoveryID, "admin@acme.com", "") // an admin who does not believe it
+```
+
+## "Why?": case codes instead of guesswork
+
+Every approval decision names a short case code (`K7P-2QX`: 6 characters, no I, O, 0 or 1). A user who was asked to
+match a number, needed a passkey or was refused reads it out to your support team, and the team opens the whole
+decision by it in the TouchQue dashboard (Logs → Look up a case): what went in, each check's verdict (the access rule
+that matched, the risk signals that were acted on and the ones only measured), and the single change that would have
+let it through. No screenshots, no log digging. The code opens nothing on its own: only your workspace sees its
+decisions.
+
+```go
+step, err := tq.Start("WITHDRAW", user, touchque.StartOptions{IP: ip})
+// step.CaseCode → "K7P-2QX"; step.Reasons → [{Code: "critical_action", Text: "The action is marked critical"}]
+var apiErr *touchque.APIError
+if _, err := tq.Login.Request(user, "LOGIN", "", "", "", false, false); errors.As(err, &apiErr) && apiErr.CaseCode != "" {
+	show("Tell your support team: " + apiErr.CaseCode)
+}
+```
+
+`CaseCode` is on `LoginRequestResponse`, `RiskCheckResult`, `APIError` and `Step` (the guard keeps it while it
+waits); `Reasons` says why number matching or a passkey is needed.
+
+## Blocking `VerifyWithOptions` and number matching
+
+`client.Login.VerifyWithOptions` sends the request and waits for the phone in one call. With number matching (your
+option, a workspace policy, a critical action or the risk engine can turn it on) the phone asks the user to pick a
+number, and the call returns only after they have. Set `OnChallenge`: it runs once, right after the request is
+created and before the wait. **Show `ChallengeCode` to the user now; the phone asks for it.**
+
+```go
+res, err := client.Login.VerifyWithOptions(touchque.LoginRequestOptions{
+    ExternalUsername: user, Type: "SEND_MONEY",
+    OnChallenge: func(c touchque.VerifyChallenge) {
+        if c.ChallengeCode != "" {
+            notifyUser("Pick "+c.ChallengeCode+" on your phone", c.CaseCode)
+        }
+    },
+}, 30000)
+```
+
+`VerifyChallenge` has `RequestID`, `ChallengeCode` ("" without number matching), `ExpiresAt`, `Reasons` and
+`CaseCode`. It is not called when only a passkey can approve (the call returns `*PasskeyRequiredError` first). A
+panic in it is recovered and logged: the call keeps waiting. The positional `Login.Verify` has no callback. In a web
+request, where the page hears nothing until you answer, use the relay or `client.Start`: their first answer already
+carries the number.
 
 ## Verifying the device proof (no need to trust TouchQue)
 

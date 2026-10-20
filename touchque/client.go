@@ -7,10 +7,16 @@ type Client struct {
 	WebAuthn *WebAuthnResource
 	Webhook  *WebhookResource
 	Offline  *OfflineResource
-	Actions  *ActionsResource
+	// ActionTypes: what users approve (LOGIN, SEND_MONEY…). Was Actions before v4.
+	ActionTypes *ActionTypesResource
+	// Actions is TouchQue Actions: your own code in the approval pipeline.
+	Actions *ActionsResource
 	// Risk is silent sign-ins: should this sign-in ask the phone, and which
 	// browsers TouchQue knows.
 	Risk *RiskResource
+	// Recovery is Never Locked Out: move a user whose phone is gone to a new
+	// phone, with colleagues vouching.
+	Recovery *RecoveryResource
 
 	apiSecret string
 }
@@ -51,8 +57,10 @@ func newClient(config *Config) *Client {
 		WebAuthn:  newWebAuthnResource(httpWrapper),
 		Webhook:   newWebhookResource(config),
 		Offline:   newOfflineResource(httpWrapper),
-		Actions:   newActionsResource(httpWrapper),
+		ActionTypes: newActionTypesResource(httpWrapper),
+		Actions:     newActionsResource(httpWrapper),
 		Risk:      newRiskResource(httpWrapper),
+		Recovery:  newRecoveryResource(httpWrapper),
 		apiSecret: config.APISecret,
 	}
 }

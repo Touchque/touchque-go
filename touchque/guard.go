@@ -59,6 +59,8 @@ type GuardInput struct {
 	// phone approval in this browser may be (0 = always ask). nil leaves it
 	// to TouchQue, which never goes beyond its own limit (7 days).
 	SilentSignInMaxAgeSeconds *int
+	// Context is for your TouchQue Actions only (event.context). Never shown on the phone.
+	Context map[string]interface{}
 }
 
 // GuardError is the machine-readable error alongside a refusal's body.
@@ -135,6 +137,7 @@ func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult 
 		claims.St = string(step.State)
 		claims.Rid = step.RequestID
 		claims.N = step.Number
+		claims.Cc = step.CaseCode
 		if step.Offline != nil {
 			claims.Oc = step.Offline.ChallengeID
 		}
@@ -281,7 +284,7 @@ func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult 
 			return issue(Step{State: StepOffline, Offline: &OfflineStep{ChallengeID: bound.Oc}}, guardClaims{Oc: bound.Oc, Rid: bound.Rid, N: bound.N})
 		}
 		if now.State == StepWaiting || now.State == StepPasskeyRequired {
-			return issue(Step{State: now.State, RequestID: bound.Rid, Number: bound.N}, guardClaims{N: bound.N})
+			return issue(Step{State: now.State, RequestID: bound.Rid, Number: bound.N, CaseCode: bound.Cc}, guardClaims{N: bound.N})
 		}
 		return issue(Step{State: now.State, RequestID: bound.Rid}, guardClaims{})
 	}
@@ -298,7 +301,7 @@ func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult 
 	}
 	step, err := c.Start(in.Action, in.User, StartOptions{
 		Details: norm, ReferenceID: in.ReferenceID, IP: in.IP, UserAgent: in.UserAgent, NoEnroll: in.NoEnroll,
-		BrowserProof: browserProof,
+		BrowserProof: browserProof, Context: in.Context,
 	})
 	if err != nil {
 		return errorResult(err)
@@ -313,7 +316,7 @@ func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult 
 func silentApproval(ctx context.Context, c *Client, in GuardInput, browserProof string) *Approval {
 	res, err := c.Risk.Check(ctx, RiskCheckOptions{
 		ExternalUsername: in.User, Type: in.Action, ClientIP: in.IP, UserAgent: in.UserAgent,
-		BrowserProof: browserProof, MaxAgeSeconds: in.SilentSignInMaxAgeSeconds,
+		BrowserProof: browserProof, MaxAgeSeconds: in.SilentSignInMaxAgeSeconds, Context: in.Context,
 	})
 	if err != nil || res == nil || res.Prompt {
 		return nil

@@ -37,6 +37,8 @@ type RiskCheckOptions struct {
 	// in this browser may be, in seconds; 0 = always ask. nil leaves it to
 	// TouchQue, which never goes beyond its own limit (7 days).
 	MaxAgeSeconds *int
+	// Context is for your TouchQue Actions only (event.context).
+	Context map[string]interface{}
 }
 
 // RiskReason is one reason behind a Check answer. Show Text or translate Code.
@@ -52,6 +54,8 @@ type RiskReason struct {
 	Code string `json:"code"`
 	// Text is English.
 	Text string `json:"text"`
+	// Action: with Code "action", the slug of the TouchQue Action that asked.
+	Action string `json:"action,omitempty"`
 }
 
 // RiskCheckResult is the answer to Check.
@@ -69,6 +73,8 @@ type RiskCheckResult struct {
 	// only measured for this workspace: Prompt is always true and the
 	// reasons say what would have happened.
 	SilentMode string `json:"silentMode"`
+	// CaseCode is the "Why?" case code of this check (K7P-2QX), to show the user.
+	CaseCode string `json:"caseCode,omitempty"`
 }
 
 // RiskBrowsersOptions selects whose browsers Browsers lists.
@@ -133,7 +139,8 @@ func parseRiskCheck(raw interface{}) *RiskCheckResult {
 				continue
 			}
 			text, _ := m["text"].(string)
-			res.Reasons = append(res.Reasons, RiskReason{Code: code, Text: text})
+			action, _ := m["action"].(string)
+			res.Reasons = append(res.Reasons, RiskReason{Code: code, Text: text, Action: action})
 		}
 	}
 	switch a, _ := body["assurance"].(string); a {
@@ -142,6 +149,9 @@ func parseRiskCheck(raw interface{}) *RiskCheckResult {
 	}
 	if m, _ := body["silentMode"].(string); m == "shadow" {
 		res.SilentMode = "shadow"
+	}
+	if cc, ok := body["caseCode"].(string); ok {
+		res.CaseCode = cc
 	}
 	return res
 }
@@ -174,6 +184,9 @@ func (rr *RiskResource) Check(ctx context.Context, opts RiskCheckOptions) (*Risk
 	}
 	if opts.MaxAgeSeconds != nil {
 		body["maxAgeSeconds"] = *opts.MaxAgeSeconds
+	}
+	if len(opts.Context) > 0 {
+		body["context"] = opts.Context
 	}
 	res, err := rr.http.postCtx(ctx, "/risk/check", body)
 	if err != nil {

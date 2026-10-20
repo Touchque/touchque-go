@@ -99,6 +99,22 @@ func TestWebAuthn_PrimaryOptionsAndVerify(t *testing.T) {
 	}
 }
 
+func TestWebAuthn_PrimaryOptions_NoUsernameIsForAnyPasskey(t *testing.T) {
+	client, closeFn := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if _, ok := body["externalUsername"]; ok || r.URL.Path != "/webauthn/authenticate/primary/options" {
+			t.Errorf("want no externalUsername on %s, got %v", r.URL.Path, body)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"attemptId": "att_2", "options": map[string]interface{}{"allowCredentials": []interface{}{}}})
+	})
+	defer closeFn()
+	opts, err := client.WebAuthn.PrimaryOptions("")
+	if err != nil || opts.AttemptID != "att_2" {
+		t.Fatalf("primaryOptions: %+v %v", opts, err)
+	}
+}
+
 func TestWebAuthn_ListCredentials_QueryParam(t *testing.T) {
 	client, closeFn := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/webauthn/credentials" || r.URL.Query().Get("externalUsername") != "a@b.com" {

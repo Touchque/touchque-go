@@ -110,6 +110,9 @@ func (f *fakeAPI) revoke(id, reason string) {
 
 func (f *fakeAPI) reconfirm(id string) { f.call("/__test/reconfirm", map[string]interface{}{"id": id}) }
 
+// recovery moves a recovery to VOUCHING, COOLING or COMPLETED (Never Locked Out).
+func (f *fakeAPI) recovery(to string) { f.call("/__test/recovery", map[string]interface{}{"to": to}) }
+
 func (f *fakeAPI) calls() []map[string]interface{} {
 	f.t.Helper()
 	resp, err := http.Get(f.baseURL + "/__test/calls")

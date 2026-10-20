@@ -7,6 +7,76 @@ Go modules are versioned via git tags (e.g. `touchque-go/v1.1.0`), not a
 manifest field — the version below corresponds to the tag this SDK should
 be released under next.
 
+## [4.0.0] — 2026-10-20 — TouchQue Actions
+
+> 3.6.0 (Never Locked Out) and 3.7.0 ("Why?" case codes) below were not published on their own; they ship in 4.0.0.
+
+### Breaking
+- **Module path `github.com/Touchque/touchque-go/v4`.**
+- **Action types moved to `Client.ActionTypes`** (`*ActionTypesResource`: `Define`, `List`).
+  `Client.Actions` is now TouchQue Actions. Replace `client.Actions.Define(...)` with
+  `client.ActionTypes.Define(...)`.
+
+### Added
+- **TouchQue Actions** (`Client.Actions`): your own code at points of the approval pipeline, run by TouchQue
+  in a sandbox. See [ACTIONS.md](../ACTIONS.md).
+  - `Deploy(slug, DeployActionOptions{Trigger, Code | Template, Secrets, AllowedHosts, Capabilities,
+    OnFailure, Order, Enabled, Activate})` (idempotent; a version asking for a loosening capability answers
+    `Deployed: false` with `Approval.Required` and waits for an admin's phone approval), `List`, `Get`,
+    `Version`, `Update`, `Delete`, `Rollback(slug, *int)`.
+  - Developer loop: `Test(TestActionOptions{…, EventID | Event})` (one run, nothing sent),
+    `DryRun(DryRunActionOptions{…, Replaces, Limit, Since})` (replay against recent real decisions),
+    `Events`, `Logs`, `Metrics`.
+  - `Triggers()`, `Templates()`, `RenderTemplate(id, trigger, params)`; `Actions.Secrets.Set | List | Delete`.
+- `Context map[string]interface{}` on `LoginRequestOptions`, `RiskCheckOptions`, `StartOptions`,
+  `GuardInput`, and `RequireOptions.Context func(*http.Request) map[string]interface{}`: for your Actions only
+  (`event.context`), never shown on the phone.
+- **`OnChallenge func(VerifyChallenge)` on `LoginRequestOptions`** (used by `Login.VerifyWithOptions`): with number
+  matching the phone asks for a number that the call used to return only after the approval. `OnChallenge` runs
+  once, right after the request is created and before the wait, with `VerifyChallenge{RequestID, ChallengeCode,
+  ExpiresAt, Reasons, CaseCode}`. Show `ChallengeCode` to the user now; the phone asks for it. Not called when only
+  a passkey can approve. A panic in it is recovered and logged: the call keeps waiting.
+- `RiskReason.Action`: with `Code: "action"`, the slug of the Action that asked.
+- **Passkey autofill** (WebAuthn conditional mediation): `WebAuthn.PrimaryOptions("")` asks for options
+  that accept any passkey of your site, and `PrimaryVerify` names the user the passkey belongs to.
+  `NewRelayHandler`'s `POST /passkey/authenticate/options` does the same when the body has no `email`, so
+  `@touchque/web`'s `passkeys.autofill()` works with no extra route.
+
+## [3.7.0] — 2026-10-19 — "Why?" case codes
+
+### Added
+- **Case codes.** Every approval decision (`Login.Request`, `Risk.Check`) now names a short case code
+  (`K7P-2QX`). Show it to your user ("Tell your support team: K7P-2QX"); your team opens the decision by it in
+  the dashboard (Logs → Look up a case).
+  - `LoginRequestResponse.CaseCode` and `Reasons` (why number matching or a passkey is needed; plain English,
+    never a score).
+  - `RiskCheckResult.CaseCode`.
+  - `APIError.CaseCode` on refusals (blocked, frozen, rate limited, provisional, keys lost).
+  - `Step.CaseCode` and `Step.Reasons` (`Start`, the guard, the relay and the HTTP middleware); the guard keeps
+    showing the code while it waits.
+
+## [3.6.0] — 2026-10-19 — Never Locked Out
+
+### Added
+- **Never Locked Out.** A user whose phone is lost, dead or replaced moves to a new phone without a help desk:
+  colleagues they named vouch on their own phones, then a cooling-off anyone can veto.
+  - `tq.Recovery.SetVouchers(ctx, user, vouchers)` and `tq.Recovery.Vouchers(ctx, user)` (who can vouch today and why
+    not). Ask for the user's phone before you change the list.
+  - `tq.Recovery.Start(ctx, StartRecoveryOptions{...})` returns a `*Recovery` with `BindURI` (show it as a QR for the
+    new phone); `Status(ctx, id)`, `List(ctx, user, open)`, `Veto(ctx, id, by, reason)`, `(*Recovery).Open()`.
+  Only after your first factor (password, IdP). The risk engine's BLOCK refuses; hard signals add a voucher and
+  double the cooling-off. Errors carry `code`: `not_enough_vouchers` (with `required`, `eligible`, `vouchers`),
+  `recovery_in_progress`, `blocked`, `frozen`, `rate_limited`, `device_not_linked`. After a vouch move, critical
+  actions answer 403 `blocked` / `recovery_probation` for 24 h. New webhook events `RECOVERY_STARTED`,
+  `RECOVERY_DEVICE_BOUND`, `RECOVERY_COOLING`, `RECOVERY_COMPLETED`, `RECOVERY_VETOED`, `RECOVERY_EXPIRED`,
+  `RECOVERY_FAILED`; `DEVICE_LINKED` can carry `via: 'recovery'`.
+- `details` / `noticeDetails` on start: what the vouchers' phones and the old phone show, in your words (default
+  English lines otherwise).
+- Approval requests on the phone carry `expiresAt` (a vouch stays open for 10 minutes).
+
+### Changed
+- Phone-to-phone transfers must be signed by a phone with a hardware key (the apps do since this release) and move
+  only the accounts the phone chose.
 ## [3.5.0] — 2026-10-18 — Silent sign-ins
 
 ### Added

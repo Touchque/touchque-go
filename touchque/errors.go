@@ -15,7 +15,11 @@ type APIError struct {
 	AttemptsLeft int
 	// RetryAfter: seconds to wait before retrying (429 / 423).
 	RetryAfter int
-	Data       map[string]interface{}
+	// CaseCode is the "Why?" case code of a refusal (K7P-2QX): show it to the
+	// user ("Tell your support team: K7P-2QX"); your team opens the decision by
+	// it in the dashboard. Empty for other errors.
+	CaseCode string
+	Data     map[string]interface{}
 }
 
 func (e *APIError) Error() string {

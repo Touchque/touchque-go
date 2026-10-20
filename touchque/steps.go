@@ -29,16 +29,22 @@ const (
 // Step is what a headless approval currently looks like — safe to
 // json.Marshal and send to the browser. It never contains API secrets.
 type Step struct {
-	State      StepState     `json:"state"`
-	RequestID  string        `json:"requestId,omitempty"`
-	Number     string        `json:"number,omitempty"`
-	ExpiresAt  string        `json:"expiresAt,omitempty"`
-	Details    []LoginDetail `json:"details,omitempty"`
-	Enroll     *EnrollStep   `json:"enroll,omitempty"`
-	Offline    *OfflineStep  `json:"offline,omitempty"`
-	Reason     string        `json:"reason,omitempty"`
-	RetryAfter int           `json:"retryAfter,omitempty"`
-	Assurance  *Assurance    `json:"assurance,omitempty"`
+	State     StepState     `json:"state"`
+	RequestID string        `json:"requestId,omitempty"`
+	Number    string        `json:"number,omitempty"`
+	ExpiresAt string        `json:"expiresAt,omitempty"`
+	Details   []LoginDetail `json:"details,omitempty"`
+	Enroll    *EnrollStep   `json:"enroll,omitempty"`
+	Offline   *OfflineStep  `json:"offline,omitempty"`
+	Reason    string        `json:"reason,omitempty"`
+	// CaseCode is the "Why?" case code of this decision (K7P-2QX): show it
+	// with the step ("Tell your support team: K7P-2QX"). Safe for the browser.
+	CaseCode string `json:"caseCode,omitempty"`
+	// Reasons say why number matching, a passkey or a refusal (plain English,
+	// a fixed list, never a score).
+	Reasons    []RiskReason `json:"reasons,omitempty"`
+	RetryAfter int          `json:"retryAfter,omitempty"`
+	Assurance  *Assurance   `json:"assurance,omitempty"`
 	// TelemetryToken is set only when the workspace collects behavioural
 	// signals: it lets the browser post them for this one request
 	// (@touchque/web does it when given `telemetry`). Not a credential.
@@ -103,6 +109,8 @@ type StartOptions struct {
 	// (X-TouchQue-Browser), passed through untouched. Once the user approves,
 	// TouchQue knows this browser.
 	BrowserProof string
+	// Context is for your TouchQue Actions only (event.context). Never shown on the phone.
+	Context map[string]interface{}
 }
 
 // normalizeDetails matches the API's own normalization: nil in, nil out.
@@ -139,6 +147,7 @@ func (c *Client) Start(action, user string, opts StartOptions) (*Step, error) {
 	res, err := c.Login.RequestWithOptions(LoginRequestOptions{
 		ExternalUsername: user, Type: action, ReferenceID: opts.ReferenceID,
 		ClientIP: opts.IP, UserAgent: opts.UserAgent, Details: norm, BrowserProof: opts.BrowserProof,
+		Context: opts.Context,
 	})
 	if err == nil {
 		var canary *Canary
@@ -146,9 +155,11 @@ func (c *Client) Start(action, user string, opts StartOptions) (*Step, error) {
 			canary = &Canary{URL: res.Canary.URL}
 		}
 		if res.RequiresPasskey {
-			return &Step{State: StepPasskeyRequired, RequestID: res.RequestID, ExpiresAt: res.ExpiresAt, Details: norm, Canary: canary}, nil
+			return &Step{State: StepPasskeyRequired, RequestID: res.RequestID, ExpiresAt: res.ExpiresAt, Details: norm, Canary: canary,
+				CaseCode: res.CaseCode, Reasons: res.Reasons}, nil
 		}
-		return &Step{State: StepWaiting, RequestID: res.RequestID, Number: res.ChallengeCode, ExpiresAt: res.ExpiresAt, Details: norm, TelemetryToken: res.TelemetryToken, Canary: canary}, nil
+		return &Step{State: StepWaiting, RequestID: res.RequestID, Number: res.ChallengeCode, ExpiresAt: res.ExpiresAt, Details: norm, TelemetryToken: res.TelemetryToken, Canary: canary,
+			CaseCode: res.CaseCode, Reasons: res.Reasons}, nil
 	}
 
 	apiErr, ok := err.(*APIError)
@@ -162,11 +173,11 @@ func (c *Client) Start(action, user string, opts StartOptions) (*Step, error) {
 		}
 		return enrollStep(c, user)
 	case apiErr.StatusCode == 423:
-		return &Step{State: StepFrozen, RetryAfter: apiErr.RetryAfter}, nil
+		return &Step{State: StepFrozen, RetryAfter: apiErr.RetryAfter, CaseCode: apiErr.CaseCode}, nil
 	case apiErr.StatusCode == 429:
-		return &Step{State: StepRateLimited, RetryAfter: apiErr.RetryAfter}, nil
+		return &Step{State: StepRateLimited, RetryAfter: apiErr.RetryAfter, CaseCode: apiErr.CaseCode}, nil
 	case apiErr.StatusCode == 400 && (apiErr.Code == "unknown_action" || strings.Contains(strings.ToLower(apiErr.Message), "invalid action type")):
-		return nil, &ConfigError{Message: "touchque: unknown action \"" + action + "\". Create it once with client.Actions.Define(\"" + action + "\", ...) or in the Dashboard (Action Types)."}
+		return nil, &ConfigError{Message: "touchque: unknown action \"" + action + "\". Create it once with client.ActionTypes.Define(\"" + action + "\", ...) or in the Dashboard (Action Types)."}
 	case apiErr.StatusCode == 403:
 		reason := apiErr.Reason
 		if reason == "" && (apiErr.Code == "passkey_not_registered" || dataError(apiErr) == "phishing_resistant_required") {
@@ -181,7 +192,7 @@ func (c *Client) Start(action, user string, opts StartOptions) (*Step, error) {
 		if reason == "" {
 			reason = "blocked"
 		}
-		return &Step{State: StepBlocked, Reason: reason}, nil
+		return &Step{State: StepBlocked, Reason: reason, CaseCode: apiErr.CaseCode}, nil
 	}
 	return nil, err
 }
@@ -283,6 +294,7 @@ type guardClaims struct {
 	Rid string `json:"rid,omitempty"`
 	N   string `json:"n,omitempty"`
 	Oc  string `json:"oc,omitempty"`
+	Cc  string `json:"cc,omitempty"` // "Why?" case code, shown while waiting
 	Exp int64  `json:"exp"`
 }
 

@@ -36,6 +36,9 @@ type RequireOptions struct {
 	// phone approval in that browser may be (0 = always ask). nil leaves it
 	// to TouchQue, which never goes beyond its own limit (7 days).
 	SilentSignInMaxAgeSeconds *int
+	// Context is for your TouchQue Actions only (event.context): roles,
+	// plan, amount… Never shown on the phone.
+	Context func(*http.Request) map[string]interface{}
 }
 
 type approvalContextKey struct{}
@@ -116,6 +119,9 @@ func Require(client *Client, action string, next http.Handler, opts RequireOptio
 			IP: ipOf(r), UserAgent: r.UserAgent(),
 			Token: token, Offline: offline == "1", Code: code, CodeType: codeType,
 		}, r.Header.Get, opts.SilentSignIn, opts.SilentSignInMaxAgeSeconds)
+		if opts.Context != nil {
+			in.Context = opts.Context(r)
+		}
 		result := runGuardContext(r.Context(), client, in)
 
 		if result.Approved != nil {

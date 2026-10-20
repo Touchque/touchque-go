@@ -94,8 +94,16 @@ func (w *WebAuthnResource) AuthenticateVerify(requestID string, response map[str
 // PrimaryOptions is step 1 of a passwordless-primary login. Requires
 // TenantPolicy.passwordlessLoginEnabled. A 404 no_passkey_registered means the
 // user has no passkey — fall back to password login.
+//
+// An empty externalUsername asks for options that accept any passkey of your
+// site (passkey autofill, where nobody has typed an email yet); PrimaryVerify
+// then names the user the passkey belongs to.
 func (w *WebAuthnResource) PrimaryOptions(externalUsername string) (*WebAuthnPrimaryOptionsResponse, error) {
-	res, err := w.http.post("/webauthn/authenticate/primary/options", map[string]interface{}{"externalUsername": externalUsername})
+	body := map[string]interface{}{}
+	if externalUsername != "" {
+		body["externalUsername"] = externalUsername
+	}
+	res, err := w.http.post("/webauthn/authenticate/primary/options", body)
 	if err != nil {
 		return nil, err
 	}

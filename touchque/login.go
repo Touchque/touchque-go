@@ -1,6 +1,7 @@
 package touchque
 
 import (
+	"log"
 	"net/url"
 	"strconv"
 	"time"
@@ -45,6 +46,37 @@ type LoginRequestOptions struct {
 	// can let the same browser in without asking. Pass it through untouched;
 	// an invalid proof only means "a browser TouchQue does not know".
 	BrowserProof string
+	// Context is for your TouchQue Actions only (event.context): roles, plan,
+	// amount… Any JSON object up to 4 KB. Never shown on the phone.
+	Context map[string]interface{}
+	// OnChallenge (VerifyWithOptions only) is called once, right after the
+	// request is created and before any waiting: show ChallengeCode to the
+	// user now; with number matching the phone asks for it. Not called when
+	// only a passkey can approve. A panic in it is recovered and logged:
+	// VerifyWithOptions keeps waiting.
+	OnChallenge func(VerifyChallenge)
+}
+
+// VerifyChallenge is what OnChallenge receives as soon as the request exists.
+type VerifyChallenge struct {
+	RequestID string
+	// ChallengeCode is the number to show when number matching is on ("" otherwise).
+	ChallengeCode string
+	ExpiresAt     string
+	// Reasons say why number matching is needed (empty for a plain push).
+	Reasons []RiskReason
+	// CaseCode is the "Why?" case code of this decision.
+	CaseCode string
+}
+
+// callOnChallenge runs the caller's callback; its panic is logged and never stops the wait.
+func callOnChallenge(fn func(VerifyChallenge), c VerifyChallenge) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[TouchQue] OnChallenge failed: %v", r)
+		}
+	}()
+	fn(c)
 }
 
 // Request sends a 2FA login/approval request to the user's mobile device.
@@ -92,6 +124,9 @@ func (l *LoginResource) RequestWithOptions(opts LoginRequestOptions) (*LoginRequ
 	if opts.BrowserProof != "" {
 		payload["browserProof"] = opts.BrowserProof
 	}
+	if len(opts.Context) > 0 {
+		payload["context"] = opts.Context
+	}
 	res, err := l.http.post("/login/request", payload)
 	if err != nil {
 		return nil, err
@@ -119,6 +154,20 @@ func (l *LoginResource) RequestWithOptions(opts LoginRequestOptions) (*LoginRequ
 	if canary, ok := res["canary"].(map[string]interface{}); ok {
 		if u, ok := canary["url"].(string); ok && u != "" {
 			resp.Canary = &Canary{URL: u}
+		}
+	}
+	// "Why?": the decision's case code and, for a step-up, its plain reasons.
+	if cc, ok := res["caseCode"].(string); ok {
+		resp.CaseCode = cc
+	}
+	if list, ok := res["reasons"].([]interface{}); ok {
+		for _, item := range list {
+			if m, ok := item.(map[string]interface{}); ok {
+				if code, ok := m["code"].(string); ok {
+					text, _ := m["text"].(string)
+					resp.Reasons = append(resp.Reasons, RiskReason{Code: code, Text: text})
+				}
+			}
 		}
 	}
 
@@ -257,7 +306,17 @@ func (l *LoginResource) Verify(externalUsername string, loginType string, refere
 	}, timeoutMs)
 }
 
-// VerifyWithOptions is Verify with every request option, including Details.
+// VerifyWithOptions is Verify with every request option, including Details
+// and OnChallenge. With number matching (your RequireNumberMatch, a workspace
+// policy or the risk engine can turn it on) the user must pick a number on
+// the phone: show it from OnChallenge, which runs before the wait.
+//
+//	client.Login.VerifyWithOptions(touchque.LoginRequestOptions{
+//		ExternalUsername: user, Type: "SEND_MONEY",
+//		OnChallenge: func(c touchque.VerifyChallenge) {
+//			if c.ChallengeCode != "" { show("Pick " + c.ChallengeCode + " on your phone") }
+//		},
+//	}, 30000)
 func (l *LoginResource) VerifyWithOptions(opts LoginRequestOptions, timeoutMs int) (*VerifyResponse, error) {
 	reqResult, err := l.RequestWithOptions(opts)
 	if err != nil {
@@ -270,6 +329,13 @@ func (l *LoginResource) VerifyWithOptions(opts LoginRequestOptions, timeoutMs in
 	}
 	if reqResult.RequiresPasskey {
 		return nil, &PasskeyRequiredError{RequestID: reqID}
+	}
+	// The number to show, before waiting: the phone asks the user for it.
+	if opts.OnChallenge != nil {
+		callOnChallenge(opts.OnChallenge, VerifyChallenge{
+			RequestID: reqID, ChallengeCode: reqResult.ChallengeCode, ExpiresAt: reqResult.ExpiresAt,
+			Reasons: reqResult.Reasons, CaseCode: reqResult.CaseCode,
+		})
 	}
 
 	startTime := time.Now()

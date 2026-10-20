@@ -87,7 +87,7 @@ func TestContract_ActionsDefineCreatesAndUpdates(t *testing.T) {
 	c := api.client(t)
 
 	critical := true
-	if _, err := c.Actions.Define("EXPORT", DefineOptions{Name: "Export data", Critical: &critical}); err != nil {
+	if _, err := c.ActionTypes.Define("EXPORT", DefineOptions{Name: "Export data", Critical: &critical}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var body map[string]interface{}

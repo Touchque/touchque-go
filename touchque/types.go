@@ -29,6 +29,14 @@ type LoginRequestResponse struct {
 	ChallengeCode string `json:"challengeCode"`
 	Message       string `json:"message"`
 	ExpiresAt     string `json:"expiresAt"`
+	// CaseCode is the "Why?" case code of this decision (K7P-2QX). Show it to
+	// the user ("Tell your support team: K7P-2QX"); your team opens the whole
+	// decision (each check, the rule that matched, what would have let it
+	// through) by this code in the dashboard (Logs → Look up a case).
+	CaseCode string `json:"caseCode,omitempty"`
+	// Reasons say why number matching or a passkey is needed (a fixed list,
+	// never a score); empty for a plain push.
+	Reasons []RiskReason `json:"reasons,omitempty"`
 	// RequiresPasskey is true when a phishing-resistant policy demands a
 	// passkey approval — no push was sent for this request.
 	RequiresPasskey bool `json:"requiresPasskey,omitempty"`
