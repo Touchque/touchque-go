@@ -143,6 +143,12 @@ func (a *AuthResource) GetUser(externalUsername string) (*GetUserResponse, error
 	if e, ok := res["expireAt"].(string); ok {
 		resp.ExpireAt = e
 	}
+	if dev, ok := res["device"].(map[string]interface{}); ok {
+		posture := &DevicePosture{}
+		if err := decodeInto(dev, posture); err == nil {
+			resp.Device = posture
+		}
+	}
 
 	return resp, nil
 }

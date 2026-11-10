@@ -1,6 +1,9 @@
 package touchque
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // APIError represents an error returned by the TouchQue API (status >= 400).
 type APIError struct {
@@ -19,11 +22,45 @@ type APIError struct {
 	// user ("Tell your support team: K7P-2QX"); your team opens the decision by
 	// it in the dashboard. Empty for other errors.
 	CaseCode string
-	Data     map[string]interface{}
+	// Feature is the catalog id (device_risk, ai_agents, mobile_sdk, ciam…) of
+	// a feature refusal; see ErrFeatureNotInPlan. Empty for other errors.
+	Feature string
+	Data    map[string]interface{}
 }
 
 func (e *APIError) Error() string {
 	return fmt.Sprintf("TouchQue API Error (HTTP %d): %s", e.StatusCode, e.Message)
+}
+
+// The organization behind your workspace cannot use a feature here (HTTP
+// 403). An *APIError matches one of these with errors.Is, and ErrFeature for
+// any of the three; its Feature field names the feature:
+//   - ErrFeatureNotInPlan: not in its plan (feature_not_in_plan); an owner or
+//     admin adds it in the TouchQue dashboard;
+//   - ErrFeatureReadOnly: being turned off (feature_read_only); reads still
+//     work for 14 days, changes are refused;
+//   - ErrFeatureOff: switched off on this TouchQue deployment (feature_off).
+var (
+	ErrFeature          = errors.New("touchque: feature not available")
+	ErrFeatureNotInPlan = errors.New("touchque: feature not in the organization's plan")
+	ErrFeatureReadOnly  = errors.New("touchque: feature is being turned off (read-only)")
+	ErrFeatureOff       = errors.New("touchque: feature switched off on this deployment")
+)
+
+var featureErrors = map[string]error{
+	"feature_not_in_plan": ErrFeatureNotInPlan,
+	"feature_read_only":   ErrFeatureReadOnly,
+	"feature_off":         ErrFeatureOff,
+}
+
+// Is lets errors.Is match the feature sentinels.
+func (e *APIError) Is(target error) bool {
+	code, _ := e.Data["error"].(string)
+	sentinel, ok := featureErrors[code]
+	if !ok {
+		return false
+	}
+	return target == ErrFeature || target == sentinel
 }
 
 // NetworkError means the request never reached the API (DNS, connection, timeout).
@@ -98,3 +135,28 @@ func (e *PasskeyRequiredError) Error() string {
 	}
 	return fmt.Sprintf("TouchQue: request %q must be approved with a passkey (phishing-resistant policy); no push was sent.", e.RequestID)
 }
+
+// ApprovalError means an AI agent's approval ended without a usable approval:
+// Status is rejected, blocked, revoked, expired, stale (approved too long ago)
+// or redeemed (already used).
+type ApprovalError struct {
+	ApprovalID string
+	Status     string
+	Reason     string
+}
+
+func (e *ApprovalError) Error() string {
+	if e.Reason != "" {
+		return fmt.Sprintf("TouchQue: approval %q is %s (%s)", e.ApprovalID, e.Status, e.Reason)
+	}
+	return fmt.Sprintf("TouchQue: approval %q is %s", e.ApprovalID, e.Status)
+}
+
+// ApprovalMismatchError means an approval token does not say what you are
+// about to execute (another person, action type, amount, recipient…), or it
+// is not a valid token from TouchQue. Do not execute.
+type ApprovalMismatchError struct {
+	Message string
+}
+
+func (e *ApprovalMismatchError) Error() string { return "TouchQue: " + e.Message }

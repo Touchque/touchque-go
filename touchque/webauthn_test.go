@@ -99,6 +99,30 @@ func TestWebAuthn_PrimaryOptionsAndVerify(t *testing.T) {
 	}
 }
 
+func TestWebAuthn_PrimaryAvailability(t *testing.T) {
+	answers := []map[string]interface{}{
+		{"enabled": true, "userVerification": "required"},
+		{"enabled": false, "userVerification": "required"},
+		{},
+	}
+	calls := 0
+	client, closeFn := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/webauthn/authenticate/primary/availability" {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(answers[calls])
+		calls++
+	})
+	defer closeFn()
+	want := []WebAuthnPrimaryAvailability{{Enabled: true, UserVerification: "required"}, {}, {}}
+	for i, w := range want {
+		got, err := client.WebAuthn.PrimaryAvailability()
+		if err != nil || *got != w {
+			t.Fatalf("answer %d: %+v %v", i, got, err)
+		}
+	}
+}
+
 func TestWebAuthn_PrimaryOptions_NoUsernameIsForAnyPasskey(t *testing.T) {
 	client, closeFn := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]interface{}

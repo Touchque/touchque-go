@@ -16,7 +16,8 @@ import (
 	"time"
 )
 
-const sdkVersion = "4.0.0"
+const sdkVersion = "4.2.0"
+
 type httpClient struct {
 	config *Config
 	client *http.Client
@@ -104,6 +105,20 @@ func (h *httpClient) getWithQuery(endpoint string, params map[string]string) (ma
 // getWithQueryCtx is getWithQuery bound to ctx: cancelling ctx aborts the request.
 func (h *httpClient) getWithQueryCtx(ctx context.Context, endpoint string, params map[string]string) (map[string]interface{}, error) {
 	return h.sendCtx(ctx, "GET", endpoint+buildQuery(params), nil)
+}
+
+// getText is a GET whose answer is a file (CSV or JSON lines), returned as text.
+func (h *httpClient) getText(endpoint string) (string, error) {
+	_, respBody, resp, err := h.do("GET", endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode >= 400 {
+		var result map[string]interface{}
+		_ = json.Unmarshal(respBody, &result)
+		return "", apiErrorFrom(resp, result)
+	}
+	return string(respBody), nil
 }
 
 func (h *httpClient) delete(endpoint string) (map[string]interface{}, error) {
@@ -219,6 +234,9 @@ func apiErrorFrom(resp *http.Response, result map[string]interface{}) *APIError 
 	}
 	if cc, ok := result["caseCode"].(string); ok {
 		apiErr.CaseCode = cc
+	}
+	if f, ok := result["feature"].(string); ok {
+		apiErr.Feature = f
 	}
 	if a, ok := result["attemptsLeft"].(float64); ok {
 		apiErr.AttemptsLeft = int(a)

@@ -33,6 +33,14 @@ type RiskCheckOptions struct {
 	// X-TouchQue-Browser header, made by @touchque/web), passed through
 	// untouched.
 	BrowserProof string
+	// ClientSignals is the end user's page check from @touchque/web
+	// (startClientSignals().encode()): software driving the browser is never silent.
+	ClientSignals string
+	// DeviceRisk is the page's device report from @touchque/web
+	// (deviceRisk.collect({ purpose: 'sign_in' })): a device signal is never silent.
+	DeviceRisk string
+	// DeviceRiskRequestID: the page's identification (deviceRisk.identify()), preferred over DeviceRisk.
+	DeviceRiskRequestID string
 	// MaxAgeSeconds is your own limit on how long ago the last phone approval
 	// in this browser may be, in seconds; 0 = always ask. nil leaves it to
 	// TouchQue, which never goes beyond its own limit (7 days).
@@ -181,6 +189,15 @@ func (rr *RiskResource) Check(ctx context.Context, opts RiskCheckOptions) (*Risk
 	}
 	if opts.BrowserProof != "" {
 		body["browserProof"] = opts.BrowserProof
+	}
+	if opts.ClientSignals != "" {
+		body["clientSignals"] = opts.ClientSignals
+	}
+	if opts.DeviceRisk != "" {
+		body["deviceRisk"] = opts.DeviceRisk
+	}
+	if opts.DeviceRiskRequestID != "" {
+		body["deviceRiskRequestId"] = opts.DeviceRiskRequestID
 	}
 	if opts.MaxAgeSeconds != nil {
 		body["maxAgeSeconds"] = *opts.MaxAgeSeconds

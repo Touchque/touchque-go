@@ -5,6 +5,9 @@ package touchque
 // scenarios as the Node/Python/PHP SDKs' step-up tests.
 
 import (
+	"bytes"
+	"log/slog"
+	"strings"
 	"testing"
 )
 
@@ -265,5 +268,26 @@ func TestStart_WaitingStepCarriesTheTelemetryToken(t *testing.T) {
 	step, err = c.Start("LOGIN", "tel@acme.com", StartOptions{})
 	if err != nil || step.TelemetryToken != "tt_test" {
 		t.Fatalf("expected the telemetry token, got %+v %v", step, err)
+	}
+}
+
+func TestContract_GuardLogsOnlyThroughConfigLogger(t *testing.T) {
+	api := startFakeAPI(t)
+	api.link("jane4@acme.com")
+
+	// The default: nothing anywhere, the misconfiguration is the 500 answer.
+	silent := runGuard(api.client(t), GuardInput{User: "jane4@acme.com", Action: "NOT_DEFINED"})
+	if silent.Status != 500 || silent.Body.Error.Code != "misconfigured" {
+		t.Fatalf("unexpected result: %+v", silent)
+	}
+
+	var buf bytes.Buffer
+	logged := NewClient(&Config{APIKey: "tq_test_key", APISecret: "test_secret", BaseURL: api.baseURL, TimeoutMs: 5000,
+		Logger: slog.New(slog.NewTextHandler(&buf, nil))})
+	if res := runGuard(logged, GuardInput{User: "jane4@acme.com", Action: "NOT_DEFINED"}); res.Status != 500 {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	if !strings.Contains(buf.String(), "[TouchQue] misconfigured") || !strings.Contains(buf.String(), "NOT_DEFINED") {
+		t.Fatalf("expected the misconfiguration in the logger, got %q", buf.String())
 	}
 }

@@ -559,7 +559,7 @@ func TestRelay_AuthResultErrorMapping(t *testing.T) {
 		{errors.New("boom"), 503, "2FA_UNAVAILABLE"},
 	} {
 		rec := httptest.NewRecorder()
-		sendAuthResultError(rec, tc.err)
+		sendAuthResultError(rec, tc.err, nil)
 		var out map[string]interface{}
 		_ = json.Unmarshal(rec.Body.Bytes(), &out)
 		if rec.Code != tc.status || out["error"] != tc.code {

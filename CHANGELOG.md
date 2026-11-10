@@ -7,6 +7,142 @@ Go modules are versioned via git tags (e.g. `touchque-go/v1.1.0`), not a
 manifest field — the version below corresponds to the tag this SDK should
 be released under next.
 
+## [Unreleased]
+
+## [4.2.0] — 2026-11-10
+
+### Security
+- **The offline approval-token check refuses another workspace's token.** `GET /agents/jwks.json` is one key set for every Touchque workspace, and the check used to compare `aud` only when you passed an audience, so a token Touchque signed for someone else's workspace (their own phone, any person's name, any details) could pass your executor. Now:
+  - `Agents.VerifyApprovalToken(token, audience, expect)` (an empty audience) uses this workspace's own audience by default: `Agents.ApprovalAudience()` asks `GET /agents/approval-audience` once (`touchque:workspace:<id>`) and keeps it.
+  - `VerifyApprovalTokenWith(token, jwks, audience, expect, now)` requires the audience. A missing or empty one throws *ApprovalMismatchError (`audience is required`).
+  - A token without `aud` is refused (`the approval token names no workspace`), as is one for another workspace (`the approval token is for another workspace`).
+  - Breaking for callers of the low-level function who passed no audience: pass Agents.ApprovalAudience()'s value.
+  - `redeemApproval` was already safe: Touchque compares `aud` with your workspace there.
+
+### Added
+- **`DeviceRisk.SearchEvents(ctx, DeviceRiskSearchOptions{...})`: search your workspace's Device risk identifications**, newest first, one page at a time (`GET /device-risk/events`): `From`/`To` (7 days by default, at most 90, within your retention), `Signal`, `StepUp`, `Kind`, `Origin`, `IP` (an address or a CIDR range; never returned), `Account`, `VisitorID`, `RequestID`, `Limit` (1 to 100) and the opaque `Cursor` from the previous page's `NextCursor`.
+- `DeviceRiskCheckResult.Engine`: the engine's state for this check; `"unavailable"` when the risk engine could not be reached and the verdict is a safe default (`StepUp` true), so an outage can be told apart from risk. Empty when the answer carries none.
+- **`WebAuthn.PrimaryAvailability()`: is passkey sign-in on for your workspace?** `GET /webauthn/authenticate/primary/availability` answers a `WebAuthnPrimaryAvailability` (`Enabled`, `UserVerification` `required` or `preferred`, empty when off). Ask before your sign-in page shows its passkey button and passkey autofill; when it is off, `PrimaryOptions` answers 403 `passwordless_login_disabled`.
+
+### Fixed
+- **My Account step-ups can be satisfied.** `AuthorizationOptions.MaxAge` 0 still sends nothing, and a negative value now sends `max_age=0` (sign in again now); `CallbackChecks.MaxAge` and `VerifyIDToken`'s `maxAge` below 0 require a sign-in just now. The documented step-up (`MaxAge 0`) never sent `max_age`, so the hosted login reused the old session and the next My Account call failed again.
+- **`SignAgentCard` works with any EC `crypto.Signer`.** An EC key that is not an `*ecdsa.PrivateKey` (a KMS, HSM, PKCS#11 or YubiKey signer) panicked; it is now signed through `Sign` and its DER answer turned into JWS `r || s`. A P-384 or P-521 key is refused (`malformed`) instead of being labelled ES256 with a signature no verifier accepts.
+- **README Quick start no longer panics.** It used `touchque.NewClient(&touchque.Config{})`, which never reads the environment and panics on the empty API key; it now uses `touchque.New()`, which reads `TQ_API_KEY` / `TQ_API_SECRET`.
+
+### Security
+- **Hosted login: an empty `iss` is refused too (RFC 9207).** `HandleCallback` already refused a callback whose `iss` names another issuer; one with an empty `iss=` now returns `issuer_mismatch` as well, before the code is exchanged. A callback without `iss` (a server that does not send it yet) is still accepted.
+- **Safe Guard: without a purpose, `VerifySafeApproval` accepts only an ordinary approval.** An empty `VerifySafeApprovalOptions.Purpose` used to try `approve` and then `schedule`, so a co-signer that executes on `Valid` would accept an approval meant to schedule a governance change, whose hash has no Safe nonce. `schedule` must now be named (`Purpose: "schedule"`); the shared vectors check it.
+- **Touchque Login refuses a plaintext issuer.** `NewHostedLogin` now refuses an `http://` `Domain` except on this machine (`localhost`, `127.0.0.1`, `::1`, `*.localhost`), as the API `BaseURL` already did: codes, PKCE verifiers, the client secret and tokens would otherwise travel in clear text.
+
+### Added
+- **Shared Signals: receive the security events an identity provider sends after sign-in.** TouchQue SSO sends Security Event Tokens (OpenID Shared Signals Framework 1.0) for an organization's members to the receivers its admin adds (Organization > Continuous access): CAEP `session-revoked`, `credential-change`, `device-compliance-change`, RISC `account-disabled`, `credential-compromise`; `txn` carries the case code of TouchQue's decision. `NewSecurityEventVerifier(SecurityEventVerifierConfig{Issuer, Audience, JWKSURI?, JWKS?, ClockSkew?}).Verify(ctx, token)` returns a `*SecurityEvent` (`JTI`, `Issuer`, `Audience`, `IssuedAt`, `TXN`, `Subject`, `Type`, `Name`, `Claims`) or a `*SecurityEventError` with the RFC 8935 code to answer (`invalid_request`, `invalid_key`, `invalid_issuer`, `invalid_audience`); `PollSecurityEvents(ctx, PollSecurityEventsParams{URL, Token, Ack, SetErrs, MaxEvents})` for poll delivery (RFC 8936); `SecurityEventTypes`. The keys come from the issuer's `/.well-known/ssf-configuration`; a SET does not expire, so keep the jtis you handled. Tested against the shared vectors (`fixtures/security-event-vectors.json`).
+- **Safe Guard: Safe transactions approved on the approver's phone, for TouchQueSafeGuard.** `client.SafeGuard.Request(ctx, SafeGuardRequestOptions{ExternalUsername, Type, SafeTx})` sends the raw transaction (the phone decodes it itself and signs with a key only its biometrics unlock), `Status(ctx, requestID)` and `WaitForApproval(ctx, requestID, timeout, pollInterval)` hand back the 105-byte approval. `VerifySafeApproval(target, approval, approverKey, VerifySafeApprovalOptions{Purpose, ApproverIndex, Rows | DisplayDigest, Now})` checks it the way the guard does, without trusting TouchQue: the Safe transaction hash (EIP-712, Keccak-256 here) and the governance hash computed here, the 149-byte message, low `s`, the one-day expiry window, the P-256 signature. `WithSafeApprovals(ownerSignatures, approvals)` for `execTransaction`, `SafeScheduleCall(safe, governanceHash, approvals)` for a governance change; `SafeTxHash`, `SafeGovernanceHash`, `SafeApprovalMessage`, `SafeDisplayDigest`. Standard library only. Tested against the shared vectors (`fixtures/safe-guard-vectors.json`).
+- **The headless step-up for any framework.** `RunGuard(ctx, client, GuardInput)` is the guard behind `Require` and the relay, for a framework without an adapter (gin, echo, chi …); `IsStatusPoll(client, GuardInput)` tells a request that only polls an approval already on its way (it never starts a push) from one your rate limit should count; `SignGuardToken(apiSecret, GuardTokenClaims)` / `VerifyGuardToken(apiSecret, token)` with the typed `GuardTokenClaims`, and `NormalizeDetails`. The same exports as the Node SDK.
+- **`Login.WaitForApproval(ctx, requestID, timeout, pollInterval)`** polls a request you already sent until the user answers, like Node's `login.waitForApproval`: a `*VerifyResponse` once approved, a `*RejectedError`, a `*TimeoutError` (expired, or `timeout` ran out; 0 = 30 seconds) or a `*PasskeyRequiredError` (`Reason` `step_up`) when the Vishing Shield moved it to a passkey. `pollInterval` 0 is 400 ms; `ctx` stops the wait.
+- **Webhook event constants for the Mobile SDK, Never Locked Out and the help desk**, the names the backend sends: `EventMobilePush`; `EventRecoveryStarted`, `EventRecoveryDeviceBound`, `EventRecoveryCooling`, `EventRecoveryCompleted`, `EventRecoveryVetoed`, `EventRecoveryExpired`, `EventRecoveryFailed`; `EventAssistOpened`, `EventAssistEnded`, `EventAssistCheckPassed`, `EventAssistCheckFailed`, `EventAssistUnfrozen`, `EventAssistClaimConfirmed`, `EventAssistClaimUnverified`.
+- **Shared Signals: discovery and poll tests, and a README section** ("Shared Signals (security events from Touchque SSO)": verifying a pushed SET and polling). The tests run against a local stub, as in the Node SDK: keys found through `/.well-known/ssf-configuration` (metadata for another issuer is refused), and `PollSecurityEvents` sending the bearer token, `ack` and `maxEvents` and returning the transmitter's error code.
+
+## [4.1.0] — not published (these changes ship in 4.2.0)
+
+### Added
+- **Device risk events like a device-intelligence event, without raw traits:** `deviceRisk.check` and `getEvent` answers carry `Network`, `Velocity` and `Bot`: the address as the risk engine saw it (country, region, city, never coordinates; the operator; `type` isp, hosting or tor; `timezoneMismatch` when the browser's clock does not fit the address), the visitor's counts (accounts, sign-ups, countries, stored-id resets, identifications in the last hour and day) and one answer to "a bot?" (`detected`, `suspected` or `not_detected`, with reasons). The field the script tag fills may now carry its pointer summary after the requestId: pass it as it came.
+
+### Changed
+- **Silent by default.** The SDK no longer writes to the standard `log` package: the guard's, relay's and `OnChallenge`'s problems go to `Config.Logger` (a `*slog.Logger`); nil, the default, logs nothing. Lines carry the error's type and text, never the request.
+- `ApprovalMismatchError` no longer names the other person in its message.
+
+### Added
+- **A code typed back on the phone:** `LoginRequestOptions.Reply` (`LoginReplyRequest`), `LoginStatusResponse.Reply` (`LoginReply{CT, At}`), `NewCodeReplyKey()` and `OpenCodeReply(privateKey, requestID, ct)`.
+- **Feature errors:** a feature your organization cannot use here (403 `feature_not_in_plan`, `feature_read_only`, `feature_off`) matches `errors.Is(err, ErrFeatureNotInPlan | ErrFeatureReadOnly | ErrFeatureOff)` (`ErrFeature` for any); `APIError.Feature` names it.
+- **Webhook events `DEVICE_RISK_SIGNAL` and `DEVICE_RISK_ALERT`** (`EventDeviceRiskSignal`, `EventDeviceRiskAlert`): a Device risk signal that asks for more (identifiers, signals and the engine's verdict, never a trait), and an alert rule of the workspace that went off. Signed like every event.
+- **Device risk in one line: `tq.DeviceRisk.Check(ctx, touchque.DeviceRiskCheckOptions{RequestID: req.FormValue("touchque_request_id"), ExternalUsername: email})`** with the script tag (`device.js`, `@touchque/web` 1.6.0), which fills that field. Pass it as it came: empty, made up or expired is still a verdict (`Report` missing, unknown, expired, invalid; the signal `device_identification_missing`, a number-matched step-up at most), never an error. `DeviceRiskReports`.
+- **Device risk: `client.DeviceRisk.Check(ctx, DeviceRiskCheckOptions{RequestID: ...})` and `client.DeviceRisk.GetEvent(ctx, requestID)`** (a paid add-on; 409 `device_risk_off` until the workspace turns it on), and `DeviceRiskRequestID` (or `DeviceRisk`) in `LoginRequestOptions` and `RiskCheckOptions`. The page's requestId comes from `@touchque/web` `deviceRisk.identify`. Every signal only ever asks for more (`StepUp`, never a refusal); signals start in shadow. `ParseDeviceRiskCheck`, `DeviceRiskEvents`.
+- **Pairing a browser by QR code: `client.QRPairings`.** `Create(ctx, CreateQRPairingOptions{KeyThumbprint, ClientIP, UserAgent, Browser, OS, TTLSeconds})` registers a pairing for the browser key your page holds (`@touchque/web` `browserKey.thumbprint()`) and returns `URI` (`touchque://pair-browser?...`) to show as a QR code; the nonce in it stays with you (TouchQue keeps its hash). `Get` says who scanned it and how near the phone was (`Proximity`), `Refuse` tells the phone why your own checks said no. `LoginRequestOptions.QRPairing` asks the phone that scanned, once, with number matching. `QRPairingURI`, `QRPairingRefusalReasons`.
+- **TouchQue Login Management API:** `Identity.RotateClientSecret(clientID)` (the new secret is shown once), `Identity.Users.EndSession(userID, sessionID)` signs the person out of one session, `Identity.Exports.File(jobID)` returns the finished export (CSV or JSON lines) as text.
+- **Actions: the `agent.approval` trigger**, before an AI agent's request reaches the phone (`Trigger: "agent.approval"`); only tightening counts: `api.deny`, `api.requirePasskey`, `api.stepUp`. See ACTIONS.md.
+- **Webhook reason `user_blocked_agent`** (`ReasonUserBlockedAgent`): the person rejected an AI agent's request with Block this agent on their phone; the agent may not ask them again, and 2FA is not frozen. `ListBlocks` can return the block reason `"phone"`.
+- **AI agents: events for a SIEM.** `Agents.ListEvents(AgentEventOptions{After, Since, Limit})`: the workspace's agent events (`AGENT_*`, `AGENTS_*`) oldest first, each with its agent, person, approval and case code; keep `Next` and pass it as `After`.
+- **AI agents: the workspace's policy and a passkey line.** `Agents.GetWorkspacePolicy()` / `SetWorkspacePolicy(policy)`: every agent's floor (an agent's own policy can only be stricter, field by field). `AgentPolicy.RequirePasskeyAbove`: over it the person approves with a passkey on your page (`AgentApprovalState.RequiresPasskey`), never on the phone or with a mandate; a background request gets 409 `interactive_required`. `EventAgentWorkspacePolicyChanged`. A second approver who answers sooner than a person can gets no token (status `blocked`, reason `inhuman_approval`).
+- **TouchQue Login: the approving app's name and custom-domain-only sign-in.** `Identity.SetApproverAppName(&name)`: the phone app the hosted pages tell customers to approve on ("Approve on the Acme app"; `nil` = your brand when the Mobile SDK is set up, else TouchQue). `Identity.SetCustomDomainOnly(true)`: serve sign-in only on the primary custom domain ({slug}.login.touchque.com redirects page loads there and refuses other calls; needs a verified primary domain with a working certificate). `Identity.CheckDomainCertificate(domainID)`: the domain's certificate at the sign-in edge now (`certificate`: pending, active or error).
+- **Cross App Access (ID-JAG) and A2A agent cards.** `RequestIDJAG` trades a member's ID token for an ID-JAG at the organization's identity provider, `RedeemIDJAG` trades it for an access token at the other service (jwt-bearer); `IDJAGVerifier` checks one at your own authorization server (typ, issuer, single audience, client, expiry, used once; `FirstUse` for a shared store). `VerifyAgentCard` checks an A2A card's signatures (JWS over the RFC 8785 canonical card; `jku` only on the card's host or `TrustedJKUHosts`), `SignAgentCard`, `CanonicalJSON`.
+- **Security-change lock, look-alike destinations, Second Thought questions — for any action type.** `LoginRequestOptions.SecurityChanges` (`&SecurityChanges{Password, MFA, Device, Email, Phone}`, when each last changed in your system): access rules and Actions read `minutesSince.mfaChange`, `.deviceChange`, … (e.g. refuse `PAYOUT_CHANGE` within 24 h of a 2FA change). `Destination` (`&Destination{Kind: "iban", Value, Known}`; kinds iban, account, wallet, address, payee) is shown in full on the phone in groups of four, with a warning when it looks like one the user used before but is not the same; `LoginRequestResponse.Destination` is a `DestinationCheck{Known, Lookalike}`, rules read `destination.lookalike`. `Locale` ("tr" | "en") for those rows. `DefineOptions.SecondThought` (`&SecondThought{Questions, Locale}`, at most two of `SecondThoughtQuestions`; one without questions turns them off): the phone asks them before Approve and a risky answer makes the approval provisional.
+- **Mobile SDK: your own app approves for your users.** `Mobile.CreateEnrollment(CreateMobileEnrollmentOptions{ExternalUsername, Replace, TTLSeconds})` gives a one-time `tqe_` token your iOS/Android app spends with the TouchQue Mobile SDK; `ListDevices`, `GetDevice`, `RemoveDevice`, `Settings`, `UpdateSettings`. `MobilePushFromWebhook(event)` turns the signed `MOBILE_PUSH` webhook into the APNs payload / FCM data you send with your own keys; `(*MobilePush).Expired`.
+- **Mobile SDK: TouchQue can send the push.** `UpdateSettings` takes `apns` / `fcm` (your own APNs key / Firebase service account); TouchQue then pushes that platform itself instead of the `MOBILE_PUSH` webhook (nil removes a key). `MobileSDKSettings.Push` shows who pushes, never the keys. `UpdateSettings` takes `androidCerts` (the SHA-256 of each Android app's signing certificate, checked against Key Attestation at enrollment). `Mobile.TestPush(deviceID)` sends a harmless push the way a request would reach the phone and says which way it went and whether APNs / FCM took it; a `MOBILE_PUSH` webhook may now have kind `test`.
+- **`ClientSignals` on `LoginRequestOptions` and `RiskCheckOptions`:** the end user's page check from `@touchque/web`; a browser driven by software is never silent and asks with number matching, or is refused where the workspace blocks it.
+- **Help desk.** `Assist.Open(ctx, OpenAssistOptions{ExternalUsername, Agent: AssistAgent{Name, Title, Ref}, Reason})` before your help desk acts on someone's account (their phone gets a calm notice; their "someone says they're from IT" button shows the agent), `Verify(ctx, id, VerifyAssistOptions{Action})` before a sensitive action (a 2-digit `ChallengeCode` the agent reads to the person, who types it and approves on their phone; `no_phone` routes to Never Locked Out), `Spend` right before the action, `Unfreeze`, `Get`, `List`, `End`; `(*AssistSession).CheckPassed(requestID)`. Webhooks `ASSIST_*`, among them `ASSIST_CLAIM_UNVERIFIED` (someone pretended to be IT).
+- **TouchQue Login: an app acting for a customer.** `login.ExchangeToken` (RFC 8693), `login.AskUser(ctx, AskUserParams{...})` and `login.WaitForUser(ctx, ask)` (CIBA, poll mode); `TokenSet.AuthorizationDetails`, `IssuedTokenType`.
+- **TouchQue Login: token vault.** `(*HostedLogin).GetConnectionToken(ctx, userAccessToken, connection, scope)` returns the provider's own access token (Google, Microsoft, GitHub…) for the signed-in customer from a connection that stores tokens (`options.tokenVault`); TouchQue refreshes it and the refresh token never leaves (`TokenSet.Connection`, `ConnectionTokenType`). `IdentityUsers.ConnectedAccounts` and `DisconnectAccount`; `(*MyAccount).StopAppAccess` and `identities[].appAccess`.
+- **`LoginRequestOptions.ExpiresIn`:** how long the push waits for the person, 30 (default) to 300 seconds, for requests the person has to read first (an AI agent asking on their behalf).
+- **`McpAuth` for MCP servers whose authorization server is TouchQue SSO** (Organization → MCP servers). `NewMcpAuth(McpAuthConfig{Issuer, Resource, Tools})`:
+  `ProtectedResourceMetadata` at `MetadataPaths` (RFC 9728), `Verify(r)` (TouchQue's JWKS, issuer, audience = this server, expiry,
+  DPoP proof for a bound token), `RequireTool` (403 `insufficient_scope` with the scope), `Middleware` (`McpClaimsFrom(ctx)`),
+  `WriteMcpAuthError`. `*McpAuthError` carries the status and the `WWW-Authenticate` header.
+- **Attack protection in `client.Identity`:** `GetAttackProtection`, `SetAttackProtection`, `AttackEvents`.
+  Actions accept the TouchQue Login triggers (`identity.post_login`, …).
+- **Email and SMS providers in `client.Identity`:** `GetDelivery`, `SetDelivery`, `RemoveDelivery`, `TestDelivery`.
+  **My Account:** `StartSMSEnrollment`, `VerifySMSEnrollment`, `RemoveSMSCodes`.
+- **TouchQue Login My Account API.** `login.MyAccountToken(ctx, refreshToken, scope)` trades a first-party app's
+  refresh token for a `https://<domain>/me/` token (keep the rotated refresh token); `login.MyAccount(accessToken)`
+  returns `*MyAccount` (Get, UpdateProfile, AuthenticationMethods, RemovePasskey, UnlinkTouchQueApp, SetEmailCodes,
+  UnlinkIdentity, SetPassword, RemovePassword, ChangeEmail, Sessions, EndSession, EndOtherSessions, Apps, RevokeApp,
+  Consents, SetMarketing, ExportData, DeleteAccount). A too-old sign-in returns `*MyAccountError` with `StepUp()`
+  true. `login.AccountURL(section)` links the hosted account page.
+- **TouchQue Login Management API: `client.Identity`.** `Users` (List, Get, Create, Update, Block, Unblock,
+  Delete (KVKK/GDPR erasure), Export, Sessions, SignOutEverywhere, ResetMFA, UnlinkIdentity,
+  SendVerificationEmail, PasswordReset, AddRoles, RemoveRole, Logs), `Imports` and `Exports` (Start, Get, Wait),
+  `Roles`, `Organizations` (Members, AddMembers, RemoveMember, SetConnections, Invite, RevokeInvitation),
+  `Clients`, `APIs`, `Connections`, `CustomDomains`, and the tenant (GetTenant, UpdateTenant, RotateSigningKey,
+  Outbox).
+- **TouchQue Login (hosted sign-in) for your app.** `NewHostedLogin(HostedLoginConfig{...})` is an OpenID Connect
+  client for your tenant (`acme.login.touchque.com` or your own domain): `AuthorizationURL` (PKCE S256, state,
+  nonce, `ScreenHint`, `LoginHint`, `UILocales`, `Connection`, `Organization`, `MaxAge`, `ACRValues`),
+  `HandleCallback` (state and `iss` checks, code exchange, ID token verified against the JWKS: signature, issuer,
+  audience, expiry, nonce, `at_hash`), `Refresh`, `ClientCredentials`, `Revoke`, `Userinfo`, `LogoutURL`, and
+  `VerifyAccessToken(ctx, token, audience, scopes...)` for your API. Standard library only.
+- **AI agents as identities of their own.** `client.Agents` registers an agent with its PUBLIC key, an accountable
+  owner, the action types it may ask approvals for and a review date (`Create`, `List`, `Get`, `Update`, `AddKey`,
+  `RemoveKey`, `Suspend`, `Resume`, `Revoke`, `SetKillSwitch`). `NewAgent(AgentConfig{...})` is the agent side: its
+  own key (private_key_jwt, RFC 7523), a 10-minute token bound to that key with DPoP (RFC 9449), never your API key.
+  `GenerateAgentKey("ES256" | "EdDSA")`, `JWKThumbprint()`.
+- **Agent policies and people who stopped an agent:** `client.Agents.SetPolicy(id, AgentPolicy{...})`, `ListBlocks(id)`, `LiftBlock(id, user)`.
+- **Agents ask people to approve on their phone.** `agent.RequestApproval(AgentApprovalParams{...})`,
+  `agent.WaitForApproval(ctx, id, timeout, interval)` (approval token or `*ApprovalError`),
+  `client.Agents.RedeemApproval(token, ApprovalExpectation{...})` (checked before anything is used, then used exactly
+  once; `*ApprovalMismatchError`), `client.Agents.VerifyApprovalToken()` and `VerifyApprovalTokenWith()` offline,
+  `MatchesAuthorizationDetails()`.
+- **Four eyes and mandates.** `AgentPolicy.FourEyes` (a second approver on their phone; `awaiting_second` keeps
+  `WaitForApproval` waiting; `SecondApprover`, `SecondChallengeCode`). `agent.RequestMandate(MandateParams{...})`,
+  `GetMandate`, `RevokeMandate`; `AgentApprovalParams.MandateID` is approved within the mandate without a push.
+  `client.Agents.ListMandates(id, user)`, `RevokeMandate(id, mandateID)`.
+- **What TouchQue notices about an agent.** Refusals carry the case code; new codes `suspicious_content` (400, `markers`),
+  `interactive_required` (409), `name_too_similar` (409 on create/update, `similarTo`); an approval answered faster than a
+  person ends `blocked` with reason `inhuman_approval`. `EventAgent*` constants name every agent event.
+- **Organization AI agents on TouchQue SSO: `NewOrgAgent(OrgAgentConfig{...})`.** DPoP-bound tokens for one of the
+  organization's apps with its own key or its platform's token (`GitHubActionsToken("touchque")`, `FileToken(path)`):
+  `GetToken(resource, scope)`, `Authorize(req, resource, scope)`, `DPoPProof()`.
+- **An organization's agent acts for a member.** `ExchangeToken(subjectToken, resource, scope)` (RFC 8693),
+  `AskMember(AskMemberParams{...})` and `WaitForMember(ctx, request)` (CIBA, poll mode).
+- **An organization's agent uses a member's own account elsewhere (token vault).** `(*OrgAgent).GetConnectionToken(subjectToken, connection, scope)` returns an `OrgAgentConnectionToken`: the member's own access token at Google, Microsoft 365, GitHub, Slack, Salesforce or any OAuth 2.0 service they connected on TouchQue (portal `/connections`), for a connection that names the agent. A Bearer token for that service; TouchQue refreshes it and the refresh token never leaves; `invalid_grant` when the member has not connected it, disconnected or left.
+- **An organization's agent asks for a shared account.** `(*OrgAgent).AskToOpenSharedAccount(account, loginHint, message)` → `SharedAccountAsk{AskID, OpenURL, Status, ExpiresIn}`: the member opens `OpenURL` where their TouchQue extension is paired, their phone approves with the agent named, and the extension signs in there; the agent never sees the password. `SharedAccountAskStatus(askID)` and `WaitForSharedAccount(ctx, ask)` say only how it ended (`opened`, `refused` with a reason, `declined`, `expired`).
+- **Token vault for your agents (`Agents.Vault`).** `PutConnection(name, AgentVaultConnectionParams{Provider, ClientID, ClientSecret, Tenant, Issuer, AgentIDs})` (google, microsoft, github, facebook, linkedin, x, oidc: your OAuth app there), `Deposit(connection, user, AgentVaultDeposit{...})` after your own OAuth flow with the person, `ListConnections`, `ListAccounts(user)` (never a token), `RemoveAccount`, `RemoveConnection`. The agent: `(*Agent).GetConnectionToken(user, connection, scope)` (scope `vault:read`): a fresh Bearer token for that service, refreshed by TouchQue; the refresh token never leaves.
+- **`(*Agent).RequireApproval(ctx, params, onChallenge, timeout)`:** asks the person's phone and waits in one call (the number shown through `onChallenge`), for putting in front of any agent framework's tool call.
+- **API key scopes are enforced:** a narrower key (for example `login:*`) is refused elsewhere with 403 `insufficient_scope`.
+- **`Device`** on `GetUserResponse` (`*DevicePosture`): the linked phone's posture (platform, model, OS version,
+  security patch, screen lock, jailbreak/root, hardware key, attestation, `State`, `Issues`), or nil before a phone is linked.
+- **`RadiusClient`** (`NewRadiusClient`, `Config`, `Authenticate`, `Wait`, `Passcode`): the RADIUS API of
+  TouchQue SSO, for the TouchQue RADIUS proxy and anyone building their own RADIUS server. VPN sign-ins
+  with the number shown on the VPN, a plain push, or a code from the TouchQue app; `DefaultSSOBaseURL`.
+  For a TouchQue outage: `OutageCache` (signed pages of everyone who may use the VPN with digests of their
+  next codes), `OpenOutagePage` (checks the signature), `MatchOutageCode`, `OutageLog` (what was decided
+  meanwhile), and `RadiusApp.OutagePolicy`.
+- **`ChallengeDigits`** in `LoginRequestOptions` (`2` or `3`): the length of the matching number when one is
+  shown, `3` for 100–999. The longer of this and your workspace policy wins: a request can lengthen the
+  number, never shorten it.
+- **Codes during a TouchQue outage:** `Offline.TotpVerifiers` and `MatchTotpVerifier`. While TouchQue answers,
+  fetch salted, slow digests of your users' next time-based codes (up to 4 hours ahead, 24,000 user-steps a
+  call; never a key); while it cannot be reached, check a typed code against them locally. Needs the workspace policies
+  `offlineTotpEnabled` and `outageVerifiersEnabled`; frozen and removed users fall out on the next fetch.
+
 ## [4.0.0] — 2026-10-20 — TouchQue Actions
 
 > 3.6.0 (Never Locked Out) and 3.7.0 ("Why?" case codes) below were not published on their own; they ship in 4.0.0.

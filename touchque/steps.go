@@ -125,6 +125,10 @@ func normalizeDetails(details []LoginDetail) []LoginDetail {
 	return out
 }
 
+// NormalizeDetails trims each label and value the way the API does (nil in,
+// nil out): the details a guard token and an approval are bound to.
+func NormalizeDetails(details []LoginDetail) []LoginDetail { return normalizeDetails(details) }
+
 func detailsDigest(details []LoginDetail) string {
 	norm := normalizeDetails(details)
 	if len(norm) == 0 {
@@ -285,18 +289,24 @@ func (c *Client) Complete(requestID, user, action string, expect CompleteExpect)
 // derived from the API secret and binds the approval to one user, action and
 // transaction, so it cannot be replayed for another user, amount or route.
 
-type guardClaims struct {
-	U   string `json:"u"`
-	A   string `json:"a"`
-	D   string `json:"d"`
-	R   string `json:"r"`
-	St  string `json:"st"`
-	Rid string `json:"rid,omitempty"`
-	N   string `json:"n,omitempty"`
-	Oc  string `json:"oc,omitempty"`
-	Cc  string `json:"cc,omitempty"` // "Why?" case code, shown while waiting
-	Exp int64  `json:"exp"`
+// GuardTokenClaims are what a guard token carries (SignGuardToken /
+// VerifyGuardToken): the user, action, details and reference id it is bound
+// to, the step it was issued for and the request behind it.
+type GuardTokenClaims struct {
+	U   string `json:"u"`             // user
+	A   string `json:"a"`             // action
+	D   string `json:"d"`             // details digest (DetailsDigest)
+	R   string `json:"r"`             // reference id
+	St  string `json:"st"`            // step state (StepWaiting …)
+	Rid string `json:"rid,omitempty"` // request id
+	N   string `json:"n,omitempty"`   // matching number
+	Oc  string `json:"oc,omitempty"`  // offline challenge id
+	Cc  string `json:"cc,omitempty"`  // "Why?" case code, shown while waiting
+	Exp int64  `json:"exp"`           // expiry, ms since the epoch
 }
+
+// guardClaims is the guard's own name for GuardTokenClaims.
+type guardClaims = GuardTokenClaims
 
 func nowMs() int64 { return time.Now().UnixMilli() }
 
@@ -351,4 +361,18 @@ func verifyGuardToken(apiSecret, token string) *guardClaims {
 		return nil
 	}
 	return &claims
+}
+
+// SignGuardToken signs claims into a guard token ("v1.<body>.<mac>") with a
+// key derived from apiSecret, for a guard you build yourself (RunGuard and
+// Require issue their own). Set Exp: RunGuard's tokens live 10 minutes.
+func SignGuardToken(apiSecret string, claims GuardTokenClaims) string {
+	return signGuardToken(apiSecret, claims)
+}
+
+// VerifyGuardToken returns the claims of a guard token signed with apiSecret,
+// or nil when it is malformed, signed with another key or expired. Compare U,
+// A, D and R with the current request before you trust it.
+func VerifyGuardToken(apiSecret, token string) *GuardTokenClaims {
+	return verifyGuardToken(apiSecret, token)
 }

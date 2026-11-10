@@ -1,6 +1,7 @@
 package touchque
 
 import (
+	"log/slog"
 	"net/url"
 	"os"
 	"strings"
@@ -15,6 +16,10 @@ type Config struct {
 	APISecret string
 	BaseURL   string
 	TimeoutMs int
+	// Logger receives the SDK's own problems: a misconfigured guard, a
+	// failed OnChallenge, a relay without LoginUser. nil (the default) logs
+	// nothing. Lines carry an error's type and text, never request data.
+	Logger *slog.Logger
 }
 
 // DefaultConfig creates a new Config with standard defaults.

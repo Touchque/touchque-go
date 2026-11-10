@@ -256,3 +256,39 @@ func TestMemoryReplayCache_ExpiresEntries(t *testing.T) {
 		t.Fatal("live entry must be rejected")
 	}
 }
+
+// The Mobile SDK, Never Locked Out and help-desk event names, exactly as the
+// backend sends them, and a signed one reads back as its constant.
+func TestWebhook_MobileRecoveryAndAssistEvents(t *testing.T) {
+	for got, want := range map[string]string{
+		EventMobilePush:            "MOBILE_PUSH",
+		EventRecoveryStarted:       "RECOVERY_STARTED",
+		EventRecoveryDeviceBound:   "RECOVERY_DEVICE_BOUND",
+		EventRecoveryCooling:       "RECOVERY_COOLING",
+		EventRecoveryCompleted:     "RECOVERY_COMPLETED",
+		EventRecoveryVetoed:        "RECOVERY_VETOED",
+		EventRecoveryExpired:       "RECOVERY_EXPIRED",
+		EventRecoveryFailed:        "RECOVERY_FAILED",
+		EventAssistOpened:          "ASSIST_OPENED",
+		EventAssistEnded:           "ASSIST_ENDED",
+		EventAssistCheckPassed:     "ASSIST_CHECK_PASSED",
+		EventAssistCheckFailed:     "ASSIST_CHECK_FAILED",
+		EventAssistUnfrozen:        "ASSIST_UNFROZEN",
+		EventAssistClaimConfirmed:  "ASSIST_CLAIM_CONFIRMED",
+		EventAssistClaimUnverified: "ASSIST_CLAIM_UNVERIFIED",
+	} {
+		if got != want {
+			t.Errorf("%s != %s", got, want)
+		}
+	}
+
+	payload := map[string]interface{}{
+		"event": "RECOVERY_COMPLETED", "externalUsername": "jane@acme.com", "integrationId": "int_1",
+		"recoveryId": "rec_1", "status": "COMPLETED", "method": "vouch",
+		"timestamp": time.Now().UTC().Format(time.RFC3339), "jti": "jti_rec_1",
+	}
+	event, err := newTestWebhook(t).Verify(serverWebhook(t, payload, testWebhookSecret), "")
+	if err != nil || event["event"] != EventRecoveryCompleted {
+		t.Fatalf("event = %+v, err = %v", event, err)
+	}
+}

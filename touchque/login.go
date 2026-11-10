@@ -1,7 +1,8 @@
 package touchque
 
 import (
-	"log"
+	"context"
+	"log/slog"
 	"net/url"
 	"strconv"
 	"time"
@@ -34,6 +35,36 @@ type LoginRequestOptions struct {
 	UserAgent          string // end user's User-Agent: shown as browser + device
 	RequireBiometric   bool
 	RequireNumberMatch bool
+	// ChallengeDigits: digits of the matching number when one is shown, 3
+	// for 100-999 (0 leaves it to the workspace policy). The longer of this
+	// and the workspace policy wins: a request can lengthen the number,
+	// never shorten it.
+	ChallengeDigits int
+	// ExpiresIn: how long the push waits for the person, in seconds: 30
+	// (default when 0) to 300. Longer suits a request the person has to read
+	// first, such as an AI agent asking on their behalf.
+	ExpiresIn int
+	// QRPairing: a browser pairing by QR code (Client.QRPairings), scanned and
+	// confirmed on the phone. Only the phone that scanned it is asked, once,
+	// with number matching, for the user it scanned for.
+	QRPairing string
+	// Reply asks the person to type back on the phone a sign-in code another
+	// service sent them; the phone encrypts it to Reply.Key and Status hands
+	// back only the ciphertext (open it with OpenCodeReply). Such a request
+	// lives 5 minutes. Not with QRPairing.
+	Reply *LoginReplyRequest
+	// ClientSignals: the end user's page check from @touchque/web
+	// (startClientSignals().encode()), passed through untouched. A browser
+	// driven by software asks with number matching, or is refused where the
+	// workspace blocks it (403 automated_client).
+	ClientSignals string
+	// DeviceRisk: the page's device report from @touchque/web
+	// (deviceRisk.collect({ purpose })), passed through untouched. Used only
+	// when your workspace turned Device risk on: its signals only ever ask
+	// for more, and a device your admin marked "step up always" asks at once.
+	DeviceRisk string
+	// DeviceRiskRequestID: the page's identification (deviceRisk.identify()), preferred over DeviceRisk.
+	DeviceRiskRequestID string
 	// Details: transaction context for the approval screen. At most 8
 	// entries, labels <= 40 and values <= 120 characters; the API rejects
 	// (never truncates) anything outside those limits. Build it from
@@ -49,6 +80,12 @@ type LoginRequestOptions struct {
 	// Context is for your TouchQue Actions only (event.context): roles, plan,
 	// amount… Any JSON object up to 4 KB. Never shown on the phone.
 	Context map[string]interface{}
+	// SecurityChanges: when the user's sign-in security last changed in your system.
+	SecurityChanges *SecurityChanges
+	// Destination: where the action sends money or value (shown in full on the phone).
+	Destination *Destination
+	// Locale: "tr" (default) or "en", the language of the rows TouchQue adds.
+	Locale string
 	// OnChallenge (VerifyWithOptions only) is called once, right after the
 	// request is created and before any waiting: show ChallengeCode to the
 	// user now; with number matching the phone asks for it. Not called when
@@ -69,14 +106,28 @@ type VerifyChallenge struct {
 	CaseCode string
 }
 
-// callOnChallenge runs the caller's callback; its panic is logged and never stops the wait.
-func callOnChallenge(fn func(VerifyChallenge), c VerifyChallenge) {
+// callOnChallenge runs the caller's callback; its panic goes to Config.Logger and never stops the wait.
+func callOnChallenge(l *slog.Logger, fn func(VerifyChallenge), c VerifyChallenge) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("[TouchQue] OnChallenge failed: %v", r)
+			sdkLog(l, slog.LevelWarn, "[TouchQue] OnChallenge failed", "error", errorText(r))
 		}
 	}()
 	fn(c)
+}
+
+// securityChangesBody sends each known change as RFC 3339 UTC.
+func securityChangesBody(c *SecurityChanges) map[string]string {
+	out := map[string]string{}
+	if c == nil {
+		return out
+	}
+	for kind, at := range map[string]time.Time{"password": c.Password, "mfa": c.MFA, "device": c.Device, "email": c.Email, "phone": c.Phone} {
+		if !at.IsZero() {
+			out[kind] = at.UTC().Format(time.RFC3339)
+		}
+	}
+	return out
 }
 
 // Request sends a 2FA login/approval request to the user's mobile device.
@@ -118,14 +169,44 @@ func (l *LoginResource) RequestWithOptions(opts LoginRequestOptions) (*LoginRequ
 	if opts.RequireNumberMatch {
 		payload["requireNumberMatch"] = true
 	}
+	if opts.ChallengeDigits == 2 || opts.ChallengeDigits == 3 {
+		payload["challengeDigits"] = opts.ChallengeDigits
+	}
+	if opts.ExpiresIn != 0 {
+		payload["expiresIn"] = opts.ExpiresIn
+	}
+	if opts.QRPairing != "" {
+		payload["qrPairing"] = opts.QRPairing
+	}
+	if opts.Reply != nil {
+		payload["reply"] = opts.Reply
+	}
 	if len(opts.Details) > 0 {
 		payload["details"] = opts.Details
 	}
 	if opts.BrowserProof != "" {
 		payload["browserProof"] = opts.BrowserProof
 	}
+	if opts.ClientSignals != "" {
+		payload["clientSignals"] = opts.ClientSignals
+	}
+	if opts.DeviceRisk != "" {
+		payload["deviceRisk"] = opts.DeviceRisk
+	}
+	if opts.DeviceRiskRequestID != "" {
+		payload["deviceRiskRequestId"] = opts.DeviceRiskRequestID
+	}
 	if len(opts.Context) > 0 {
 		payload["context"] = opts.Context
+	}
+	if changes := securityChangesBody(opts.SecurityChanges); len(changes) > 0 {
+		payload["securityChanges"] = changes
+	}
+	if opts.Destination != nil {
+		payload["destination"] = opts.Destination
+	}
+	if opts.Locale != "" {
+		payload["locale"] = opts.Locale
 	}
 	res, err := l.http.post("/login/request", payload)
 	if err != nil {
@@ -159,6 +240,12 @@ func (l *LoginResource) RequestWithOptions(opts LoginRequestOptions) (*LoginRequ
 	// "Why?": the decision's case code and, for a step-up, its plain reasons.
 	if cc, ok := res["caseCode"].(string); ok {
 		resp.CaseCode = cc
+	}
+	if d, ok := res["destination"].(map[string]interface{}); ok {
+		check := &DestinationCheck{}
+		if decodeInto(d, check) == nil {
+			resp.Destination = check
+		}
 	}
 	if list, ok := res["reasons"].([]interface{}); ok {
 		for _, item := range list {
@@ -225,7 +312,12 @@ func parseDetails(res map[string]interface{}) []LoginDetail {
 
 // Status checks the current status of a login request.
 func (l *LoginResource) Status(requestID string) (*LoginStatusResponse, error) {
-	res, err := l.http.get("/login/status/" + url.PathEscape(requestID))
+	return l.statusCtx(context.Background(), requestID)
+}
+
+// statusCtx is Status bound to ctx: cancelling ctx aborts the request.
+func (l *LoginResource) statusCtx(ctx context.Context, requestID string) (*LoginStatusResponse, error) {
+	res, err := l.http.getWithQueryCtx(ctx, "/login/status/"+url.PathEscape(requestID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -255,6 +347,12 @@ func (l *LoginResource) Status(requestID string) (*LoginStatusResponse, error) {
 	}
 	resp.Assurance = parseAssurance(res)
 	resp.ShieldFields = parseShieldFields(res)
+	if r, ok := res["reply"].(map[string]interface{}); ok {
+		if ct, ok := r["ct"].(string); ok && ct != "" {
+			at, _ := r["at"].(string)
+			resp.Reply = &LoginReply{CT: ct, At: at}
+		}
+	}
 
 	return resp, nil
 }
@@ -332,7 +430,7 @@ func (l *LoginResource) VerifyWithOptions(opts LoginRequestOptions, timeoutMs in
 	}
 	// The number to show, before waiting: the phone asks the user for it.
 	if opts.OnChallenge != nil {
-		callOnChallenge(opts.OnChallenge, VerifyChallenge{
+		callOnChallenge(l.http.config.Logger, opts.OnChallenge, VerifyChallenge{
 			RequestID: reqID, ChallengeCode: reqResult.ChallengeCode, ExpiresAt: reqResult.ExpiresAt,
 			Reasons: reqResult.Reasons, CaseCode: reqResult.CaseCode,
 		})
@@ -375,6 +473,59 @@ func (l *LoginResource) VerifyWithOptions(opts LoginRequestOptions, timeoutMs in
 		}
 
 		time.Sleep(pollInterval)
+	}
+}
+
+// WaitForApproval polls a request you already sent (Request or
+// RequestWithOptions) until the user answers on the phone: the approval, a
+// *RejectedError when they said no, a *TimeoutError when it expired or timeout
+// (0 = 30 seconds) ran out, or a *PasskeyRequiredError (Reason "step_up") when
+// the Vishing Shield moved it to a passkey. pollInterval 0 is 400 ms.
+//
+//	sent, _ := client.Login.RequestWithOptions(touchque.LoginRequestOptions{ExternalUsername: user, Type: "SEND_MONEY"})
+//	done, err := client.Login.WaitForApproval(ctx, sent.RequestID, 30*time.Second, 0)
+func (l *LoginResource) WaitForApproval(ctx context.Context, requestID string, timeout, pollInterval time.Duration) (*VerifyResponse, error) {
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	if pollInterval == 0 {
+		pollInterval = 400 * time.Millisecond
+	}
+	start := time.Now()
+	for {
+		status, err := l.statusCtx(ctx, requestID)
+		if err != nil {
+			return nil, err
+		}
+		switch status.Status {
+		case "CONFIRMED":
+			return &VerifyResponse{
+				Approved:     true,
+				Status:       status.Status,
+				RequestID:    requestID,
+				Assurance:    status.Assurance,
+				ConfirmedVia: status.ConfirmedVia,
+				Provisional:  status.Provisional,
+			}, nil
+		case "PENDING":
+			// Vishing Shield: tapped during a call, the request now waits for a
+			// passkey in the browser; polling would only run into the timeout.
+			if status.RequiresPasskey {
+				return nil, &PasskeyRequiredError{RequestID: requestID, Reason: "step_up"}
+			}
+		case "REJECTED":
+			return nil, &RejectedError{Message: "Request " + requestID + " was rejected by the user."}
+		case "EXPIRED":
+			return nil, &TimeoutError{Message: "Request " + requestID + " expired before it was approved."}
+		}
+		if time.Since(start) > timeout {
+			return nil, &TimeoutError{Message: "Login approval timed out after " + strconv.FormatInt(timeout.Milliseconds(), 10) + "ms"}
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(pollInterval):
+		}
 	}
 }
 

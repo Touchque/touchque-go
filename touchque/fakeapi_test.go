@@ -140,6 +140,20 @@ func (f *fakeAPI) lastCheck() map[string]interface{} {
 	return out
 }
 
+// lastDeviceRiskSearch is the query of the last GET /device-risk/events.
+func (f *fakeAPI) lastDeviceRiskSearch() map[string]interface{} {
+	f.t.Helper()
+	resp, err := http.Get(f.baseURL + "/__test/last-device-risk-search")
+	if err != nil {
+		f.t.Fatalf("last-device-risk-search: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var out map[string]interface{}
+	_ = json.Unmarshal(raw, &out)
+	return out
+}
+
 func (f *fakeAPI) client(t *testing.T) *Client {
 	t.Helper()
 	return NewClient(&Config{APIKey: "tq_test_key", APISecret: "test_secret", BaseURL: f.baseURL, TimeoutMs: 5000})

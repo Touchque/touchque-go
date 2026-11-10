@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"mime"
 	"net/http"
 	"strconv"
@@ -93,8 +93,8 @@ func NewRelayHandler(client *Client, opts RelayOptions) http.Handler {
 			if h.offlineEnabled {
 				tail = ", and so do the offline routes"
 			}
-			log.Printf("[TouchQue] NewRelayHandler: POST /login takes the username from the request body%s."+
-				" Set RelayOptions.LoginUser to bind them to your first factor (password step) so they cannot be used against arbitrary users.", tail)
+			sdkLog(client.logger, slog.LevelWarn, "[TouchQue] NewRelayHandler: POST /login takes the username from the request body"+tail+"."+
+				" Set RelayOptions.LoginUser to bind them to your first factor (password step) so they cannot be used against arbitrary users.")
 		})
 	}
 
@@ -307,7 +307,7 @@ func writeRelayJSON(w http.ResponseWriter, status int, v interface{}) {
 
 // sendAuthResultError is the same status-code mapping as the Node router's
 // sendAuthResultError — kept in sync.
-func sendAuthResultError(w http.ResponseWriter, err error) {
+func sendAuthResultError(w http.ResponseWriter, err error, logger *slog.Logger) {
 	var rejected *RejectedError
 	var passkey *PasskeyRequiredError
 	var timeout *TimeoutError
@@ -335,7 +335,7 @@ func sendAuthResultError(w http.ResponseWriter, err error) {
 		}
 		writeRelayJSON(w, apiErr.StatusCode, map[string]interface{}{"error": code})
 	default:
-		log.Printf("[TouchQue Relay Error] %v", err)
+		sdkLog(logger, slog.LevelError, "[TouchQue Relay Error]", "error", errorText(err))
 		writeRelayJSON(w, http.StatusServiceUnavailable, map[string]interface{}{"error": "2FA_UNAVAILABLE", "message": "The 2FA verification service is temporarily unavailable."})
 	}
 }
@@ -569,7 +569,7 @@ func (h *relayHandler) login(w http.ResponseWriter, r *http.Request, body relayB
 		via = ViaSilent
 	}
 	if err := h.authenticated(w, r, AuthenticatedInfo{ExternalUsername: user, RequestID: result.Approved.RequestID, Via: via}); err != nil {
-		sendAuthResultError(w, err)
+		sendAuthResultError(w, err, h.client.logger)
 		return
 	}
 	writeRelayJSON(w, http.StatusOK, map[string]interface{}{"status": "success", "requestId": result.Approved.RequestID, "assurance": result.Approved.Assurance})

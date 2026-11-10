@@ -250,3 +250,49 @@ func TestLogin_StatusParsesFullShape(t *testing.T) {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
 }
+
+func TestLogin_RequestSendsChallengeDigitsOnlyAsTwoOrThree(t *testing.T) {
+	var bodies []map[string]interface{}
+	client, closeFn := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		bodies = append(bodies, body)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"requestId": "req_1", "message": "ok", "expiresAt": "t"})
+	})
+	defer closeFn()
+
+	if _, err := client.Login.RequestWithOptions(LoginRequestOptions{ExternalUsername: "a@b.com", RequireNumberMatch: true, ChallengeDigits: 3}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := client.Login.RequestWithOptions(LoginRequestOptions{ExternalUsername: "a@b.com", ChallengeDigits: 4}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if bodies[0]["challengeDigits"] != float64(3) {
+		t.Fatalf("expected challengeDigits 3, got %v", bodies[0]["challengeDigits"])
+	}
+	if _, ok := bodies[1]["challengeDigits"]; ok {
+		t.Fatalf("challengeDigits 4 must not be sent: %v", bodies[1])
+	}
+}
+
+func TestLogin_RequestSendsExpiresInWhenGiven(t *testing.T) {
+	var bodies []map[string]interface{}
+	client, closeFn := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		bodies = append(bodies, body)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"requestId": "req_1", "message": "ok", "expiresAt": "t"})
+	})
+	defer closeFn()
+	for _, opts := range []LoginRequestOptions{{ExternalUsername: "a@b.com", ExpiresIn: 180, ClientSignals: "eyJ2IjoxfQ"}, {ExternalUsername: "a@b.com"}} {
+		if _, err := client.Login.RequestWithOptions(opts); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if bodies[0]["expiresIn"] != float64(180) || bodies[0]["clientSignals"] != "eyJ2IjoxfQ" {
+		t.Fatalf("expected expiresIn 180, got %v", bodies[0]["expiresIn"])
+	}
+	if _, ok := bodies[1]["expiresIn"]; ok {
+		t.Fatalf("expiresIn must not be sent by default: %v", bodies[1])
+	}
+}

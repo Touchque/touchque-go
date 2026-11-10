@@ -24,7 +24,10 @@ const (
 	ReasonUserReportedFraud = "user_reported_fraud"
 	// ReasonUserReportedCoached: the user said someone on the phone told them
 	// to approve; 2FA is frozen. Treat it as a takeover in progress.
-	ReasonUserReportedCoached      = "user_reported_coached"
+	ReasonUserReportedCoached = "user_reported_coached"
+	// ReasonUserBlockedAgent: an AI agent's request; the user said no and
+	// blocked the agent from asking them again (no 2FA freeze).
+	ReasonUserBlockedAgent         = "user_blocked_agent"
 	ReasonRiskReversed             = "risk_reversed"
 	ReasonRiskStepUp               = "risk_step_up"
 	ReasonApprovalSignatureInvalid = "approval_signature_invalid"
@@ -43,12 +46,96 @@ const (
 	EventDeviceUnlinked    = "DEVICE_UNLINKED"
 	EventPasskeyRegistered = "PASSKEY_REGISTERED"
 	EventPasskeyDeleted    = "PASSKEY_DELETED"
+	// EventDeviceRiskSignal: an identification or a DeviceRisk.Check raised a
+	// signal that asks for more (enforced or in shadow). Never a trait.
+	EventDeviceRiskSignal = "DEVICE_RISK_SIGNAL"
+	// EventDeviceRiskAlert: an alert rule of the workspace went off.
+	EventDeviceRiskAlert = "DEVICE_RISK_ALERT"
 	// EventApprovalReconfirmed: after the call, the user confirmed a
 	// provisional approval was theirs; critical actions are allowed again.
 	EventApprovalReconfirmed = "APPROVAL_RECONFIRMED"
 	// EventApprovalRevoked: the user took an approval back (reason COACHED or
 	// UNDO); end the session or stop the action built on it.
 	EventApprovalRevoked = "APPROVAL_REVOKED"
+	// EventMobilePush (Mobile SDK): send this push to your app with your own
+	// APNs / FCM keys (MobilePushFromWebhook).
+	EventMobilePush = "MOBILE_PUSH"
+
+	// Never Locked Out (client.Recovery): each step of a recovery. Read
+	// Recovery.Status for the truth; the event carries recoveryId and status.
+	// EventRecoveryStarted: a recovery was started (Start).
+	EventRecoveryStarted = "RECOVERY_STARTED"
+	// EventRecoveryDeviceBound: the new phone was bound to the recovery.
+	EventRecoveryDeviceBound = "RECOVERY_DEVICE_BOUND"
+	// EventRecoveryCooling: the vouchers' quorum was reached; the cooling-off runs.
+	EventRecoveryCooling = "RECOVERY_COOLING"
+	// EventRecoveryCompleted: the account moved to the new phone (method vouch
+	// or old_phone; probationUntil); DEVICE_LINKED with via "recovery" follows.
+	EventRecoveryCompleted = "RECOVERY_COMPLETED"
+	// EventRecoveryVetoed: stopped by you (Veto), a voucher or the old phone; nothing moved.
+	EventRecoveryVetoed = "RECOVERY_VETOED"
+	// EventRecoveryExpired: the new phone was not bound in time, or a newer recovery replaced it.
+	EventRecoveryExpired = "RECOVERY_EXPIRED"
+	// EventRecoveryFailed: it ended without a move (not enough approvals, the new phone's key changed …).
+	EventRecoveryFailed = "RECOVERY_FAILED"
+
+	// Help desk (client.Assist): the event carries assistId, agentRef and agentName.
+	// EventAssistOpened: an assist session was opened (Open).
+	EventAssistOpened = "ASSIST_OPENED"
+	// EventAssistEnded: an assist session ended (reason: ended, expired, replaced …).
+	EventAssistEnded = "ASSIST_ENDED"
+	// EventAssistCheckPassed: the person approved the help desk's check on their phone.
+	EventAssistCheckPassed = "ASSIST_CHECK_PASSED"
+	// EventAssistCheckFailed: the check failed (outcome wrong_number, not_me,
+	// coached or declined); page someone. Carries a case code.
+	EventAssistCheckFailed = "ASSIST_CHECK_FAILED"
+	// EventAssistUnfrozen: the help desk lifted the person's freeze after a passed check (Unfreeze).
+	EventAssistUnfrozen = "ASSIST_UNFROZEN"
+	// EventAssistClaimConfirmed: the person checked that the agent from IT is real.
+	EventAssistClaimConfirmed = "ASSIST_CLAIM_CONFIRMED"
+	// EventAssistClaimUnverified: someone said they were from IT and nobody was
+	// working on the account (no assistId); page someone. Carries a case code.
+	EventAssistClaimUnverified = "ASSIST_CLAIM_UNVERIFIED"
+
+	// AI agents (client.Agents): changes partners may act on, and what TouchQue noticed.
+	// EventAgentCreated: an AI agent was registered.
+	EventAgentCreated = "AGENT_CREATED"
+	// EventAgentSuspended: an AI agent was suspended (through the API or the dashboard): its tokens stopped working.
+	EventAgentSuspended = "AGENT_SUSPENDED"
+	// EventAgentResumed: an AI agent may act again.
+	EventAgentResumed = "AGENT_RESUMED"
+	// EventAgentRevoked: an AI agent was revoked for good.
+	EventAgentRevoked = "AGENT_REVOKED"
+	// EventAgentKeyAdded: a key was added to an AI agent.
+	EventAgentKeyAdded = "AGENT_KEY_ADDED"
+	// EventAgentKeyRemoved: a key was removed from an AI agent; tokens bound to it stopped working.
+	EventAgentKeyRemoved = "AGENT_KEY_REMOVED"
+	// EventAgentsPaused: the kill switch stopped every AI agent of the workspace.
+	EventAgentsPaused = "AGENTS_PAUSED"
+	// EventAgentsResumed: the kill switch was turned off.
+	EventAgentsResumed = "AGENTS_RESUMED"
+	// EventAgentPolicyChanged: an AI agent's policy changed.
+	EventAgentPolicyChanged = "AGENT_POLICY_CHANGED"
+	// EventAgentWorkspacePolicyChanged: the workspace's agent policy (every agent's floor) changed.
+	EventAgentWorkspacePolicyChanged = "AGENT_WORKSPACE_POLICY_CHANGED"
+	// EventAgentApprovalRedeemed: an approval token was used.
+	EventAgentApprovalRedeemed = "AGENT_APPROVAL_REDEEMED"
+	// EventAgentBlockedByPerson: a person stopped an AI agent from asking them ("this wasn't me", coached, or three rejections).
+	EventAgentBlockedByPerson = "AGENT_BLOCKED_BY_PERSON"
+	// EventAgentUnblockedForPerson: an admin let an AI agent ask a person again.
+	EventAgentUnblockedForPerson = "AGENT_UNBLOCKED_FOR_PERSON"
+	// EventAgentLoopDetected: an AI agent sent the same request to the same person three times in 10 minutes.
+	EventAgentLoopDetected = "AGENT_LOOP_DETECTED"
+	// EventAgentMandateRequested: an AI agent asked a person for a mandate.
+	EventAgentMandateRequested = "AGENT_MANDATE_REQUESTED"
+	// EventAgentMandateRevoked: a mandate was ended.
+	EventAgentMandateRevoked = "AGENT_MANDATE_REVOKED"
+	// EventAgentInjectionSuspected: an AI agent's text carried an instruction to the model or a link that carries data; the request was refused.
+	EventAgentInjectionSuspected = "AGENT_INJECTION_SUSPECTED"
+	// EventAgentInhumanApproval: an approval came back sooner than a person can answer; it is never usable.
+	EventAgentInhumanApproval = "AGENT_INHUMAN_APPROVAL"
+	// EventAgentLookalikeName: a new or renamed AI agent's name read like another agent's; it was refused.
+	EventAgentLookalikeName = "AGENT_LOOKALIKE_NAME"
 )
 
 // WebhookReplayCache stores webhook `jti`s already accepted. CheckAndSet must

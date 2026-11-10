@@ -91,6 +91,25 @@ func (w *WebAuthnResource) AuthenticateVerify(requestID string, response map[str
 	return resp, nil
 }
 
+// PrimaryAvailability says whether passkey sign-in
+// (TenantPolicy.passwordlessLoginEnabled) is on for your workspace. Ask before
+// your sign-in page shows its passkey button and passkey autofill: when it is
+// off, PrimaryOptions answers 403 passwordless_login_disabled. Read-only.
+func (w *WebAuthnResource) PrimaryAvailability() (*WebAuthnPrimaryAvailability, error) {
+	res, err := w.http.get("/webauthn/authenticate/primary/availability")
+	if err != nil {
+		return nil, err
+	}
+	out := &WebAuthnPrimaryAvailability{}
+	if on, ok := res["enabled"].(bool); ok && on {
+		out.Enabled = true
+		if uv, ok := res["userVerification"].(string); ok && (uv == "required" || uv == "preferred") {
+			out.UserVerification = uv
+		}
+	}
+	return out, nil
+}
+
 // PrimaryOptions is step 1 of a passwordless-primary login. Requires
 // TenantPolicy.passwordlessLoginEnabled. A 404 no_passkey_registered means the
 // user has no passkey — fall back to password login.

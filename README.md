@@ -7,7 +7,7 @@ with one middleware wrap per route.
 [![Go Reference](https://pkg.go.dev/badge/github.com/Touchque/touchque-go/v4.svg)](https://pkg.go.dev/github.com/Touchque/touchque-go/v4)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-📘 Full docs: **[authenticator.touchque.com/docs](https://authenticator.touchque.com/docs)**
+📘 Full docs: **[support.touchque.com](https://support.touchque.com)**
 
 ## Install
 
@@ -17,22 +17,26 @@ go get github.com/Touchque/touchque-go/v4
 
 ## Setup
 
-Get an API key and secret from your [TouchQue Dashboard](https://authenticator.touchque.com):
+Get an API key and secret from your [TouchQue Dashboard](https://dashboard.touchque.com):
 
 ```bash
 export TQ_API_KEY=tq_auth_your_key
 export TQ_API_SECRET=your_api_secret
 ```
 
-`touchque.NewClient(&touchque.Config{})` reads these from the environment when
-left empty.
+`touchque.New()` reads these from the environment (and `TQ_API_URL` when set).
+`touchque.NewClient(&touchque.Config{APIKey: ..., APISecret: ...})` takes them
+in code instead; it panics when they are missing or invalid.
 
 ## Quick start (net/http)
 
 ```go
 import "github.com/Touchque/touchque-go/v4/touchque"
 
-tq := touchque.NewClient(&touchque.Config{})
+tq, err := touchque.New() // TQ_API_KEY, TQ_API_SECRET
+if err != nil {
+    log.Fatal(err)
+}
 
 mux.Handle("/transfer", touchque.Require(tq, "SEND_MONEY", transferHandler, touchque.RequireOptions{
     User: func(r *http.Request) string { return sessionUser(r) },
@@ -206,7 +210,7 @@ Content-Security-Policy (`img-src` and `connect-src`).
 
 Alerts, step-ups and refusals by country, local time, role or amount, passkeys
 for admins — from a template or a few lines of JavaScript, replayed against your
-real recent sign-ins before they go live. Full guide: [ACTIONS.md](../ACTIONS.md).
+real recent sign-ins before they go live. Full guide: [Actions](https://support.touchque.com/actions).
 
 ```go
 client.Actions.Deploy("night-alert", touchque.DeployActionOptions{Trigger: "approval.decided",
@@ -222,6 +226,55 @@ client.Actions.Deploy("big-transfers", touchque.DeployActionOptions{Trigger: "lo
 Give Actions what only your server knows with `RequireOptions.Context` (never
 shown on the phone). Loosening calls need a capability an admin approves on
 their phone. Action types moved to `client.ActionTypes` in v4.
+
+## AI agents (an identity per agent, never your API key)
+
+Register each agent with its **public** key; the private key stays where the agent runs. The agent signs in
+with its own key and gets a 10-minute token bound to that key (DPoP).
+
+```go
+keys, _ := touchque.GenerateAgentKey("ES256") // or where the agent runs
+agent, err := client.Agents.Create(touchque.CreateAgentParams{
+	Name: "Invoice bot", AllowedTypes: []string{"PAY_INVOICE"}, PublicKey: keys.PublicJWK,
+	OwnerEmail: "ada@acme.com", // accountable; the agent stops if they leave
+})
+// store agent.ID and keys.PrivateJWK in the agent's secrets (TQ_AGENT_ID, TQ_AGENT_KEY)
+
+a, _ := touchque.NewAgent(touchque.AgentConfig{}) // in the agent
+me, err := a.Me()
+```
+
+`client.Agents.Suspend(id, reason)` stops one agent at once, `client.Agents.SetKillSwitch(true, reason)` every agent.
+
+```go
+ask, _ := a.RequestApproval(touchque.AgentApprovalParams{User: "jane@example.com", Type: "PAY_INVOICE", Reason: "October rent",
+	AuthorizationDetails: []map[string]interface{}{{"type": "payment_initiation",
+		"instructedAmount": map[string]interface{}{"currency": "TRY", "amount": "500.00"},
+		"creditorName": "Jane Doe", "creditorAccount": map[string]interface{}{"iban": "TR330006100519786457841326"}}}})
+done, err := a.WaitForApproval(ctx, ask.ApprovalID, 0, 0)
+
+// in your executor, right before paying: used once, only for what you are about to do
+approval, err := client.Agents.RedeemApproval(done.ApprovalToken, touchque.ApprovalExpectation{User: "jane@example.com", Type: "PAY_INVOICE",
+	AuthorizationDetails: map[string]interface{}{"type": "payment_initiation", "instructedAmount": map[string]interface{}{"currency": "TRY", "amount": "500.00"}}})
+```
+
+
+### Cross App Access (ID-JAG) and A2A agent cards
+
+An organization's identity provider (TouchQue SSO) can let one of its apps reach another service for a member with no consent screen (Cross App Access, ID-JAG, an open IETF draft): the app trades the member's ID token for an ID-JAG, then the ID-JAG for an access token at the other service. If you run an authorization server, the verifier checks an ID-JAG (issuer, single audience, your client, expiry, `typ`) and uses it once. Before your agent trusts another agent's A2A card, check its signatures (A2A 1.0 §8.4: JWS over the RFC 8785 canonical card); keys named by `jku` are only fetched from the card's own host or hosts you trust.
+
+```go
+jag, err := touchque.RequestIDJAG(ctx, touchque.RequestIDJAGParams{Issuer: "https://sso.touchque.com",
+	ClientID: clientID, ClientSecret: secret, IDToken: idToken, Audience: "https://auth.files.example"})
+tokens, err := touchque.RedeemIDJAG(ctx, touchque.RedeemIDJAGParams{TokenEndpoint: "https://auth.files.example/token",
+	ClientID: "acme", ClientSecret: filesSecret, Assertion: jag.Assertion})
+
+// Your own authorization server (jwt-bearer grant):
+v, _ := touchque.NewIDJAGVerifier(touchque.IDJAGVerifierConfig{Issuer: "https://sso.touchque.com", Audience: "https://auth.files.example"})
+claims, err := v.Verify(ctx, r.PostFormValue("assertion"), authenticatedClientID)
+
+res, err := touchque.VerifyAgentCard(ctx, cardJSON, touchque.VerifyAgentCardOptions{CardURL: "https://agent.example/.well-known/agent-card.json"})
+```
 
 ## Silent sign-ins (stop asking when nothing is new)
 
@@ -377,10 +430,159 @@ TouchQue's risk engine learns from, and it stays in your audit log:
 _, err := tq.Login.ReportFraud(requestID, touchque.ReportFraudOptions{Reason: touchque.FraudChargeback})
 ```
 
+## VPN and other RADIUS clients (`RadiusClient`)
+
+The TouchQue RADIUS proxy (a program your company runs next to its VPN) asks
+TouchQue SSO for the second factor of a VPN sign-in through `RadiusClient`. You
+only need it to build your own RADIUS server. The key and secret are a VPN app's
+proxy credential (dashboard: Organization → VPN & RADIUS); requests are signed
+like every TouchQue API call.
+
+```go
+rc, err := touchque.NewRadiusClient(&touchque.Config{APIKey: "tq_rad_…", APISecret: secret})
+app, err := rc.Config(ctx, touchque.RadiusProxyInfo{Version: "1.0.0", Clients: 1})
+d, err := rc.Authenticate(ctx, touchque.RadiusAuthRequest{
+    Username: "jdoe", PrimaryVerified: true, // your directory checked the password
+    NAS: touchque.RadiusNAS{IP: "10.0.0.1"}, Client: touchque.RadiusEndUser{IP: "85.105.10.20"},
+})
+switch d.Decision {
+case "challenge": // show d.Number in an Access-Challenge; when the user presses OK:
+    d, err = rc.Wait(ctx, d.TransactionID, 20*time.Second) // or rc.Passcode(ctx, d.TransactionID, code)
+case "pending": // a plain push
+    d, err = rc.Wait(ctx, d.TransactionID, 20*time.Second)
+}
+// "accept", "reject" (d.Reason, d.CaseCode), or "pending" after Wait: ask again.
+```
+
+## Pairing a browser by QR code
+
+Your page shows a QR code, the person scans it with the TouchQue app, and the phone that scanned is the one asked to approve, with number matching. Your page sends the thumbprint of its browser key (`@touchque/web` `browserKey.thumbprint()`); the nonce in the QR never leaves your server (TouchQue keeps its hash).
+
+```go
+p, err := client.QRPairings.Create(ctx, touchque.CreateQRPairingOptions{KeyThumbprint: thumb, ClientIP: ip, UserAgent: r.UserAgent()})
+// show p.URI (touchque://pair-browser?...) as a QR code; poll:
+now, err := client.QRPairings.Get(ctx, p.PairingID) // waiting -> scanned -> confirmed
+if now.State == "confirmed" {
+	_, err = client.Login.RequestWithOptions(touchque.LoginRequestOptions{ExternalUsername: now.ExternalUsername, Type: "LOGIN", QRPairing: p.PairingID})
+}
+// or: client.QRPairings.Refuse(ctx, p.PairingID, touchque.RefuseQRPairingOptions{Reason: "device_not_approved", Message: "Ask IT to approve this computer."})
+```
+
+`get` says `scanned` / `confirmed` once a phone holding one of your users' accounts read it (with `proximity`: same network, same country), `reported` when the person said someone told them to scan it (their 2FA freezes). `refuse` tells the phone why your own checks said no.
+
+## A code typed back on the phone
+
+When a sign-in needs a code another service sent the person (a text message, WhatsApp, e-mail), ask them to type it on the phone instead. The phone encrypts it to a one-time key you made for this request: TouchQue only ever holds the ciphertext. Such a request lives 5 minutes.
+
+```go
+key, err := touchque.NewCodeReplyKey() // keep key.PrivateKey for this request
+sent, err := client.Login.RequestWithOptions(touchque.LoginRequestOptions{ExternalUsername: user, Type: "LOGIN",
+	Reply: &touchque.LoginReplyRequest{Kind: "code", Key: key.PublicKey, Channel: "sms", Target: "+**********26"}})
+status, err := client.Login.Status(sent.RequestID) // once CONFIRMED
+if status.Reply != nil {
+	code, ok := touchque.OpenCodeReply(key.PrivateKey, sent.RequestID, status.Reply.CT)
+}
+```
+
+## Safe Guard (Safe transactions approved on the phone)
+
+TouchQueSafeGuard is a transaction guard for a Safe: a transaction runs only with approvals signed by the P-256 keys on its approvers' phones. You send the raw transaction; the phone decodes it itself, shows its own rows and signs what it computed with a key only its biometrics unlock. Delegatecalls, changes to the Safe and proxy upgrades are governance: scheduled, time-locked and vetoable. A phone without that key yet gets `409 crypto_key_missing`.
+
+```go
+target := touchque.SafeTxTarget{ChainID: "1", Safe: safe, Guard: guard,
+	Tx: touchque.SafeTxCall{To: to, Value: "0", Data: data, Operation: 0, Nonce: "42"}}
+sent, err := client.SafeGuard.Request(ctx, touchque.SafeGuardRequestOptions{
+	ExternalUsername: "treasurer@acme.com",
+	Type:             "safe_payment", // an action type from your dashboard
+	SafeTx: touchque.SafeGuardTx{SafeTxTarget: target,
+		Config:        touchque.SafeGuardConfig{Threshold: 2, GovThreshold: 3, GovDelay: 172800, ExitDelay: 259200},
+		BatchTargets:  []string{multiSendCallOnly},
+		ApproverIndex: 0}, // this approver's index in the guard
+})
+done, err := client.SafeGuard.WaitForApproval(ctx, sent.RequestID, 0, 0) // 5 minutes at most
+approval := done.SafeTx.Approval
+
+// Check it yourself: your own transaction, the approver's key from the guard on chain,
+// and the purpose you will act on ("approve" executes, "schedule" starts a governance change).
+index := 0
+check, err := touchque.VerifySafeApproval(target, approval, approverKey, touchque.VerifySafeApprovalOptions{Purpose: done.SafeTx.Purpose, ApproverIndex: &index})
+if err != nil || !check.Valid {
+	return fmt.Errorf("approval refused: %s", check.Reason)
+}
+if check.Purpose == "approve" {
+	signatures, _ := touchque.WithSafeApprovals(ownerSignatures, []string{approval}) // execTransaction(…, signatures)
+} else {
+	calldata, _ := touchque.SafeScheduleCall(safe, check.GovernanceHash, []string{approval}) // a call to the guard; runs after govDelay
+}
+```
+
+`VerifySafeApproval` makes the guard's check off chain, so a co-signer or your own server never has to trust TouchQue: it computes the Safe transaction hash (EIP-712) and the governance hash from the raw fields, rebuilds the 149-byte message the phone signed and checks the P-256 signature. It refuses a high `s`, an approval that expired or is valid for more than a day, another approver index, and, when you pass `Rows` or `DisplayDigest` from your own decoding, rows the phone did not show. Without `Purpose` only an ordinary approval (`approve`) is valid: a `schedule` approval covers the governance hash, which has no Safe nonce, so it passes only when you name `Purpose: "schedule"`. `Reason` is `approval_malformed`, `public_key_invalid`, `approver_index_mismatch`, `approval_expired`, `rows_differ`, `high_s` or `signature_invalid`; an error only means the target is not a Safe transaction. `SafeTxHash`, `SafeGovernanceHash`, `SafeApprovalMessage` and `SafeDisplayDigest` are exported too. Standard library only.
+
+## Shared Signals (security events from Touchque SSO)
+
+Touchque SSO tells your app when something happens to a member's account after sign-in: an admin ended their sessions,
+a password or 2FA method changed, a device fell out of compliance, the account was disabled or a credential leaked. It
+sends Security Event Tokens (SETs, OpenID Shared Signals Framework 1.0) to the receivers an organization's admin adds
+(Organization > Continuous access), pushed to your endpoint (RFC 8935) or waiting for you to poll (RFC 8936). End the
+person's sessions, or ask them to sign in again.
+
+```go
+v, _ := touchque.NewSecurityEventVerifier(touchque.SecurityEventVerifierConfig{
+	Issuer:   "https://sso.touchque.com",
+	Audience: "https://app.example.com", // your stream's aud, as the dashboard shows it
+})
+
+// Push: the SET is the request body (application/secevent+jwt).
+http.HandleFunc("/ssf", func(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 32<<10))
+	event, err := v.Verify(r.Context(), string(body))
+	var se *touchque.SecurityEventError
+	if errors.As(err, &se) {
+		if se.Code == "temporarily_unavailable" {
+			w.WriteHeader(503) // the keys could not be read: the transmitter tries again
+			return
+		}
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"err": se.Code, "description": se.Message})
+		return
+	}
+	if event.Name == "session-revoked" {
+		endSessionsOf(event.Subject["email"])
+	}
+	w.WriteHeader(202)
+})
+
+// Poll: acknowledge what you handled, get what is waiting.
+var ack []string
+for {
+	out, err := touchque.PollSecurityEvents(ctx, touchque.PollSecurityEventsParams{
+		URL: pollURL, Token: streamToken, Ack: ack, // the stream's endpoint_url and token
+	})
+	if err != nil {
+		return err // *SecurityEventError with the transmitter's code, or a network error
+	}
+	ack = nil
+	for jti, set := range out.Sets {
+		if event, err := v.Verify(ctx, set); err == nil {
+			handle(event)
+		}
+		ack = append(ack, jti)
+	}
+}
+```
+
+`Name` is the short name (`session-revoked`, `credential-change`, `device-compliance-change`, `account-disabled`,
+`credential-compromise`; `SecurityEventTypes` maps each to its URI), `Subject` the person
+(`{"format": "email", "email": ...}`) and `TXN` the case code of Touchque's decision. The keys come from the issuer's
+`/.well-known/ssf-configuration` (or set `JWKSURI` / `JWKS`). A SET does not expire: keep the jtis you handled and skip
+a repeat.
+
 ## Errors
 
 `APIError`, `NetworkError`, `RejectedError`, `TimeoutError`,
 `WebhookSignatureError`, `ConfigError` — check with `errors.As`.
+
+A feature your organization cannot use here comes back as a 403 `*APIError` with `Feature` set (`device_risk`, `ai_agents`…); match it with `errors.Is(err, touchque.ErrFeatureNotInPlan)`, `ErrFeatureReadOnly` or `ErrFeatureOff` (`ErrFeature` for any of them) — not in its plan (an owner or admin adds it in the TouchQue dashboard), being turned off (reads work for 14 days, changes are refused) or switched off on this TouchQue deployment.
 
 ## Security
 
@@ -395,8 +597,16 @@ See [SECURITY.md](./SECURITY.md) to report a vulnerability.
 ## Requirements
 
 - Go 1.26+ (the module's go directive)
-- A [TouchQue Dashboard](https://authenticator.touchque.com) account
+- A [TouchQue Dashboard](https://dashboard.touchque.com) account
+
+## Logging
+
+The SDK writes nothing to the standard `log` package. To see its own problems (a misconfigured guard, a failed `OnChallenge`, a relay without `LoginUser`), set `Config.Logger` to a `*slog.Logger`; nil, the default, logs nothing. Lines carry an error's type and text, never the request.
 
 ## License
 
 MIT © [TouchQue](https://touchque.com)
+
+## TouchQue Login (hosted sign-in)
+
+Sign-up and sign-in pages for your own customers, on your brand, with OpenID Connect. See [Touchque Login](https://support.touchque.com/touchque-login) for this SDK's client and a quickstart.

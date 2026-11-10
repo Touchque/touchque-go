@@ -1,5 +1,7 @@
 package touchque
 
+import "log/slog"
+
 // Client is the main entry point for the TouchQue Go SDK.
 type Client struct {
 	Auth     *AuthResource
@@ -17,8 +19,30 @@ type Client struct {
 	// Recovery is Never Locked Out: move a user whose phone is gone to a new
 	// phone, with colleagues vouching.
 	Recovery *RecoveryResource
+	// Assist is the help desk: IT working on a person's account in the open,
+	// and checks on their phone before sensitive actions.
+	Assist *AssistResource
+	// Agents manages AI agents as identities of their own: register (public
+	// key), suspend, revoke, kill switch. The agent itself uses NewAgent.
+	Agents *AgentsResource
+	// Identity is the TouchQue Login Management API: your customers' accounts,
+	// roles, organizations, apps and connections.
+	Identity *IdentityResource
+	// Mobile is the Mobile SDK: your own iOS/Android app approves for your
+	// users (enrollment tokens, devices, settings).
+	Mobile *MobileResource
+	// QRPairings pairs a browser by QR code: the phone that scans it is the
+	// one asked to approve.
+	QRPairings *QRPairingsResource
+	// DeviceRisk is Device risk: the device on your sign-up, reset, sign-in
+	// or approval page (a paid add-on).
+	DeviceRisk *DeviceRiskResource
+	// SafeGuard is Safe Guard: Safe transactions approved on the approver's
+	// phone, for TouchQueSafeGuard.
+	SafeGuard *SafeGuardResource
 
 	apiSecret string
+	logger    *slog.Logger
 }
 
 // NewClient initializes a new TouchQue SDK Client with the given
@@ -52,15 +76,23 @@ func newClient(config *Config) *Client {
 	httpWrapper := newHTTPClient(config)
 
 	return &Client{
-		Auth:      newAuthResource(httpWrapper),
-		Login:     newLoginResource(httpWrapper),
-		WebAuthn:  newWebAuthnResource(httpWrapper),
-		Webhook:   newWebhookResource(config),
-		Offline:   newOfflineResource(httpWrapper),
+		logger:      config.Logger,
+		Auth:        newAuthResource(httpWrapper),
+		Login:       newLoginResource(httpWrapper),
+		WebAuthn:    newWebAuthnResource(httpWrapper),
+		Webhook:     newWebhookResource(config),
+		Offline:     newOfflineResource(httpWrapper),
 		ActionTypes: newActionTypesResource(httpWrapper),
 		Actions:     newActionsResource(httpWrapper),
-		Risk:      newRiskResource(httpWrapper),
-		Recovery:  newRecoveryResource(httpWrapper),
-		apiSecret: config.APISecret,
+		Risk:        newRiskResource(httpWrapper),
+		Recovery:    newRecoveryResource(httpWrapper),
+		Assist:      newAssistResource(httpWrapper),
+		Agents:      newAgentsResource(httpWrapper),
+		Identity:    newIdentityResource(httpWrapper),
+		Mobile:      newMobileResource(httpWrapper),
+		QRPairings:  newQRPairingsResource(httpWrapper),
+		DeviceRisk:  newDeviceRiskResource(httpWrapper),
+		SafeGuard:   newSafeGuardResource(httpWrapper),
+		apiSecret:   config.APISecret,
 	}
 }

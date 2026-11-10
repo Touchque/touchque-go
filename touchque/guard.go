@@ -2,7 +2,7 @@ package touchque
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"strings"
 )
 
@@ -27,7 +27,7 @@ var guardStatus = map[StepState]int{
 	StepApproved: 200, StepRejected: 403, StepBlocked: 403, StepExpired: 408, StepFrozen: 423, StepRateLimited: 429,
 }
 
-// GuardInput is what runGuard needs from the current request — the same
+// GuardInput is what RunGuard needs from the current request — the same
 // shape http_middleware.go's Require builds from a *http.Request.
 type GuardInput struct {
 	User string
@@ -77,7 +77,7 @@ type GuardBody struct {
 	Error    *GuardError `json:"error,omitempty"`
 }
 
-// GuardResult is the outcome of one runGuard call: either Approved is set
+// GuardResult is the outcome of one RunGuard call: either Approved is set
 // (run the protected action) or Body/Status describe what to send instead.
 type GuardResult struct {
 	Approved *Approval
@@ -104,6 +104,20 @@ func isStatusPoll(c *Client, in GuardInput) bool {
 		return false
 	}
 	return t.St == string(StepWaiting) || t.St == string(StepPasskeyRequired) || t.St == string(StepOffline)
+}
+
+// IsStatusPoll reports whether in only polls an approval already on its way
+// (see RunGuard): it can never start a push, so a rate limit you put in front
+// of RunGuard may let it through.
+func IsStatusPoll(c *Client, in GuardInput) bool { return isStatusPoll(c, in) }
+
+// RunGuard is the step-up guard behind Require and the relay, for a framework
+// without an adapter (gin, echo, chi …): build in from the request and its
+// X-TouchQue-* headers (GuardTokenHeader …), then run the protected action
+// when Approved is set, else answer Status with Body as JSON. Same contract
+// as Require; ctx (the request's) cancels the silent sign-in check.
+func RunGuard(ctx context.Context, c *Client, in GuardInput) GuardResult {
+	return runGuardContext(ctx, c, in)
 }
 
 // runGuard is the framework-agnostic step-up guard shared by every net/http
@@ -170,7 +184,7 @@ func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult 
 			res, err = c.Offline.Verify(bound.Oc, in.Code)
 		}
 		if err != nil {
-			return errorResult(err)
+			return errorResult(c, err)
 		}
 		forThis := (res.ExternalUsername == "" || strings.EqualFold(res.ExternalUsername, in.User)) && (res.Type == "" || res.Type == in.Action)
 		if res.Approved && forThis {
@@ -241,7 +255,7 @@ func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult 
 				}
 				return issue(Step{State: StepBlocked, Reason: reason}, guardClaims{})
 			}
-			return errorResult(err)
+			return errorResult(c, err)
 		}
 		n := ch.ChallengeCode
 		if n == "" && bound != nil {
@@ -258,7 +272,7 @@ func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult 
 	if bound != nil && bound.Rid != "" && (bound.St == string(StepWaiting) || bound.St == string(StepPasskeyRequired) || bound.St == string(StepOffline)) {
 		now, err := c.Check(bound.Rid)
 		if err != nil {
-			return errorResult(err)
+			return errorResult(c, err)
 		}
 		if now.State == StepApproved {
 			approval, cerr := c.Complete(bound.Rid, in.User, in.Action, CompleteExpect{Details: in.Details, ReferenceID: in.ReferenceID})
@@ -270,7 +284,7 @@ func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult 
 					}
 					return issue(Step{State: StepExpired, Reason: reason}, guardClaims{})
 				}
-				return errorResult(cerr)
+				return errorResult(c, cerr)
 			}
 			return GuardResult{Status: 200, Approved: approval}
 		}
@@ -304,7 +318,7 @@ func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult 
 		BrowserProof: browserProof, Context: in.Context,
 	})
 	if err != nil {
-		return errorResult(err)
+		return errorResult(c, err)
 	}
 	return issue(*step, guardClaims{})
 }
@@ -340,15 +354,15 @@ func withSilentSignIn(in GuardInput, header func(string) string, on bool, maxAge
 	return in
 }
 
-func errorResult(err error) GuardResult {
+func errorResult(c *Client, err error) GuardResult {
 	if _, ok := err.(*ConfigError); ok {
-		log.Printf("[TouchQue] %v", err)
+		sdkLog(c.logger, slog.LevelError, "[TouchQue] misconfigured", "error", errorText(err))
 		return GuardResult{Status: 500, Body: &GuardBody{
 			Touchque: Step{State: StepBlocked, Reason: "misconfigured"},
 			Error:    &GuardError{Code: "misconfigured", Message: "Two-factor approval is not configured correctly."},
 		}}
 	}
-	log.Printf("[TouchQue] approval failed: %v", err)
+	sdkLog(c.logger, slog.LevelError, "[TouchQue] approval failed", "error", errorText(err))
 	return GuardResult{Status: 503, Body: &GuardBody{
 		Touchque: Step{State: StepBlocked, Reason: "unavailable"},
 		Error:    &GuardError{Code: "unavailable", Message: "Two-factor approval is temporarily unavailable."},
