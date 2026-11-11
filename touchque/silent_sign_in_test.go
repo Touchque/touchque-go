@@ -16,7 +16,7 @@ import (
 
 var silentCodes = []string{"known_browser", "recent_approval", "same_phone", "familiar_network", "no_risk_signal"}
 
-// silentVectors returns the proof as the browser sends it in X-TouchQue-Browser
+// silentVectors returns the proof as the browser sends it in X-Touchque-Browser
 // (base64url JSON) and its key's RFC 7638 thumbprint, from the shared vectors.
 func silentVectors(t *testing.T) (proof, thumbprint string) {
 	t.Helper()
@@ -430,7 +430,7 @@ func TestSilentGuard_MaxAgeSecondsIsSentWithTheCheck(t *testing.T) {
 	}
 }
 
-// ── Adapters read X-TouchQue-Browser only when SilentSignIn is on ─────
+// ── Adapters read X-Touchque-Browser only when SilentSignIn is on ─────
 
 func silentRequireHandler(c *Client, silent bool, ran *int) http.Handler {
 	protected := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

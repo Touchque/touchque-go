@@ -63,7 +63,7 @@ type AssistCheck struct {
 }
 
 // AssistSession is IT working on a person's account: OPEN until ended,
-// expired or replaced. Phone false: the person has no working TouchQue phone
+// expired or replaced. Phone false: the person has no working Touchque phone
 // to check on (Never Locked Out).
 type AssistSession struct {
 	ID               string        `json:"id"`

@@ -15,7 +15,7 @@ import (
 // The page identifies with @touchque/web (deviceRisk.identify({ siteKey,
 // purpose }) gives { visitorId, requestId, confidence }) and sends you the
 // requestId. Never trust the page's copy: read the identification here
-// (GetEvent) or check it for an account (Check). TouchQue keeps keyed hashes
+// (GetEvent) or check it for an account (Check). Touchque keeps keyed hashes
 // only, with a key of your workspace alone, and its risk engine decides.
 //
 // Every signal only ever asks for more: StepUp means an extra check on this
@@ -72,7 +72,7 @@ type DeviceRiskSignal struct {
 	Text string
 	// Strength is what a step-up for it should be: number_match, passkey, or none (context only).
 	Strength string
-	// Enforced: scored now; false means reported only (shadow) until TouchQue enforces it.
+	// Enforced: scored now; false means reported only (shadow) until Touchque enforces it.
 	Enforced bool
 	Evidence map[string]interface{}
 }

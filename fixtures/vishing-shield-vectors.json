@@ -1,5 +1,5 @@
 {
-  "description": "TouchQue Vishing Shield v1 shared vectors. The phone apps and the authenticator backend must produce these exact UTF-8 bytes. ctx is canonical: keys in this fixed order, bucketed values only.",
+  "description": "Touchque Vishing Shield v1 shared vectors. The phone apps and the authenticator backend must produce these exact UTF-8 bytes. ctx is canonical: keys in this fixed order, bucketed values only.",
   "version": "v1",
   "ctx": {
     "keys": ["call", "capture", "remote"],

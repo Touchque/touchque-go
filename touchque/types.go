@@ -9,7 +9,7 @@ type GenerateSecretResponse struct {
 	ExpiresAt        string `json:"expiresAt"`
 	TTLMs            int    `json:"ttlMs"`
 	// QRCodeDataURL is a ready-to-render `data:image/png;base64,...` encoding
-	// Secret for the TouchQue mobile app to scan.
+	// Secret for the Touchque mobile app to scan.
 	QRCodeDataURL string   `json:"qrCodeDataUrl"`
 	RecoveryCodes []string `json:"recoveryCodes"`
 }
@@ -58,7 +58,7 @@ type LoginRequestResponse struct {
 }
 
 // SecurityChanges says when the user's sign-in security last changed in your
-// own system. A zero time is left out. TouchQue adds what it saw itself;
+// own system. A zero time is left out. Touchque adds what it saw itself;
 // access rules and Actions read the minutes since each
 // (minutesSince.mfaChange, .deviceChange, ...), e.g. refuse PAYOUT_CHANGE
 // within 24 hours of a 2FA change.
@@ -93,7 +93,7 @@ type DestinationLookalike struct {
 	SimilarTo string `json:"similarTo,omitempty"`
 }
 
-// DestinationCheck is what TouchQue made of a request's Destination.
+// DestinationCheck is what Touchque made of a request's Destination.
 type DestinationCheck struct {
 	Known     bool                   `json:"known"`
 	Lookalike []DestinationLookalike `json:"lookalike"`
@@ -117,7 +117,7 @@ type GetUserResponse struct {
 	Device *DevicePosture `json:"device"`
 }
 
-// DevicePosture is what the TouchQue app last reported about the phone it runs
+// DevicePosture is what the Touchque app last reported about the phone it runs
 // on, for device trust (GetUserResponse.Device). It is self-reported by the
 // app; Signed says the phone's hardware approval key signed the latest report.
 // An empty string means "not reported" (the API sends null).
@@ -175,9 +175,9 @@ type WebAuthnAuthenticateVerifyResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 	// ExternalUsername is the user whose login request was approved, as
-	// reported by TouchQue (never by the browser). Empty on older APIs.
+	// reported by Touchque (never by the browser). Empty on older APIs.
 	ExternalUsername string `json:"externalUsername,omitempty"`
-	// RequestID is the approved login request, when TouchQue reports it.
+	// RequestID is the approved login request, when Touchque reports it.
 	RequestID string `json:"requestId,omitempty"`
 }
 

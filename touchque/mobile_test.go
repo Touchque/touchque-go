@@ -50,7 +50,7 @@ func TestMobileEnrollmentDevicesAndSettings(t *testing.T) {
 		t.Fatal("an unknown setting must be refused")
 	}
 
-	// Your own push keys: TouchQue sends that platform's push and never shows the key back.
+	// Your own push keys: Touchque sends that platform's push and never shows the key back.
 	s, err = client.Mobile.UpdateSettings(map[string]interface{}{
 		"apns": map[string]interface{}{"keyId": "ABC123DEFG", "teamId": "TEAM123456", "topic": "com.shop.app", "key": "-----BEGIN PRIVATE KEY-----"},
 		"fcm":  map[string]interface{}{"serviceAccount": map[string]interface{}{"project_id": "shop", "client_email": "push@shop.iam.gserviceaccount.com", "private_key": "x"}},

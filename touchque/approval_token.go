@@ -3,7 +3,7 @@ package touchque
 // What a partner's server checks before executing what an AI agent asked
 // for: the approval token's claims match the transaction (person, action
 // type, authorization details), and, offline, its ES256 signature against
-// TouchQue's keys (GET /agents/jwks.json). Matching rules
+// Touchque's keys (GET /agents/jwks.json). Matching rules
 // (fixtures/agent-vectors.json): every expected field must be equal, extra
 // fields are ignored; amounts compare as decimals ("500" = "500.00"), IBANs
 // without spaces and in any case, currencies in any case; a map matches a

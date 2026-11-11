@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-// ActionsResource is TouchQue Actions: your own code at points of the
+// ActionsResource is Touchque Actions: your own code at points of the
 // approval pipeline (before the push is sent, the silent sign-in decision,
-// after an approval, fraud reports, device and recovery events). TouchQue
+// after an approval, fraud reports, device and recovery events). Touchque
 // runs it in a sandbox; this resource deploys, tests, replays and observes it.
 //
 //	client.Actions.Deploy("night-alert", touchque.DeployActionOptions{

@@ -40,7 +40,7 @@ const (
 	ReasonPhishingOrigin = "phishing_origin"
 )
 
-// Event values of TouchQue's event webhooks. Ignore types you do not know.
+// Event values of Touchque's event webhooks. Ignore types you do not know.
 const (
 	EventDeviceLinked      = "DEVICE_LINKED"
 	EventDeviceUnlinked    = "DEVICE_UNLINKED"
@@ -97,7 +97,7 @@ const (
 	// working on the account (no assistId); page someone. Carries a case code.
 	EventAssistClaimUnverified = "ASSIST_CLAIM_UNVERIFIED"
 
-	// AI agents (client.Agents): changes partners may act on, and what TouchQue noticed.
+	// AI agents (client.Agents): changes partners may act on, and what Touchque noticed.
 	// EventAgentCreated: an AI agent was registered.
 	EventAgentCreated = "AGENT_CREATED"
 	// EventAgentSuspended: an AI agent was suspended (through the API or the dashboard): its tokens stopped working.
@@ -270,7 +270,7 @@ func (w *WebhookResource) Verify(rawBody string, signature string, toleranceSeco
 
 // VerifyWithOptions is Verify with a replay cache. A correctly signed
 // delivery whose `jti` was already accepted returns *WebhookReplayError
-// (usually a TouchQue retry of something you processed: answer 200, but don't
+// (usually a Touchque retry of something you processed: answer 200, but don't
 // run your side effects again).
 func (w *WebhookResource) VerifyWithOptions(rawBody string, signature string, opts WebhookVerifyOptions) (map[string]interface{}, error) {
 	tolerance := defaultWebhookToleranceSeconds
@@ -307,7 +307,7 @@ func (w *WebhookResource) VerifyWithOptions(rawBody string, signature string, op
 		return nil, &WebhookSignatureError{Message: "Invalid webhook signature"}
 	}
 
-	// TouchQue always signs a timestamp, so a missing or unparseable one fails
+	// Touchque always signs a timestamp, so a missing or unparseable one fails
 	// closed instead of skipping the freshness check.
 	if tolerance > 0 {
 		ts, _ := payload["timestamp"].(string)

@@ -48,7 +48,7 @@ type OfflineTotpVerifiers struct {
 }
 
 // TotpVerifiers is for checking typed time-based codes while your server
-// cannot reach TouchQue (an outage): salted, slow digests of each user's next
+// cannot reach Touchque (an outage): salted, slow digests of each user's next
 // codes, never a key. Check a typed code with MatchTotpVerifier. Requires the
 // workspace policies offlineTotpEnabled and outageVerifiersEnabled. Fetch
 // again every few minutes: removed and frozen users fall out.
@@ -74,7 +74,7 @@ func (o *OfflineResource) TotpVerifiers(opts OfflineTotpVerifiersOptions) (*Offl
 const offlineCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 // MatchTotpVerifier checks a typed code against one user's digests without
-// calling TouchQue. It returns the step the code belongs to (the current one
+// calling Touchque. It returns the step the code belongs to (the current one
 // or one either side) and true, or false. Accept each step once: remember the
 // step you accepted for the user and refuse codes for it or an older one.
 func MatchTotpVerifier(v *OfflineTotpVerifiers, user *OfflineTotpVerifierUser, code string, at time.Time) (int64, bool) {

@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// client.Identity (TouchQue Login Management API) against the shared fake API, which checks every signature.
+// client.Identity (Touchque Login Management API) against the shared fake API, which checks every signature.
 func TestIdentityCalls(t *testing.T) {
 	api := startFakeAPI(t)
 	defer api.close()

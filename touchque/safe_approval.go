@@ -1,8 +1,8 @@
 package touchque
 
-// Safe Guard approvals, checked without trusting TouchQue. The approver's
+// Safe Guard approvals, checked without trusting Touchque. The approver's
 // phone decodes the raw Safe transaction itself and signs, with a P-256 key
-// only its biometrics unlock, a 105-byte approval that TouchQueSafeGuard
+// only its biometrics unlock, a 105-byte approval that TouchqueSafeGuard
 // checks on chain:
 //
 //	index (1) | expiresAt (8) | displayDigest (32) | r (32) | s (32)
@@ -51,7 +51,7 @@ type SafeTxCall struct {
 }
 
 // SafeTxTarget is where the transaction runs: what the approval hashes cover.
-// ChainID is a decimal string; Guard is the TouchQueSafeGuard on the Safe.
+// ChainID is a decimal string; Guard is the TouchqueSafeGuard on the Safe.
 type SafeTxTarget struct {
 	ChainID string     `json:"chainId"`
 	Safe    string     `json:"safe"`
@@ -109,6 +109,8 @@ type SafeApprovalVerification struct {
 	GovernanceHash string
 }
 
+// safeGovTypeHash is hashed into every governance approval and checked by the
+// guard on chain: its type string never changes, not even its spelling.
 var (
 	safeMagic          = []byte("TQG1")
 	safePurposes       = map[string]byte{"approve": 1, "schedule": 2}
@@ -346,7 +348,7 @@ func SafeDisplayDigest(rows []SafeDisplayRow) string {
 }
 
 // VerifySafeApproval checks a phone's Safe Guard approval the way
-// TouchQueSafeGuard does, without trusting the server that relayed it: the
+// TouchqueSafeGuard does, without trusting the server that relayed it: the
 // Safe and governance hashes come from t, the key from the guard's approver
 // list on chain (x || y, 128 hex characters). The error is set only when t is
 // not a Safe transaction; a refused approval is a verdict. Without

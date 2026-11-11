@@ -7,7 +7,7 @@ import (
 
 // A feature the workspace's organization cannot use comes back as an
 // *APIError that errors.Is matches to its sentinel, with the feature's id.
-// Same scenarios as the Node SDK, against the shared fake TouchQue API.
+// Same scenarios as the Node SDK, against the shared fake Touchque API.
 func TestFeatureRefusalsMatchTheirSentinels(t *testing.T) {
 	api := startFakeAPI(t)
 	defer api.close()

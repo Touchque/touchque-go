@@ -10,7 +10,7 @@ import (
 // DefaultBaseURL is used when Config.BaseURL and TQ_API_URL are both unset.
 const DefaultBaseURL = "https://api.touchque.com"
 
-// Config holds the configuration options for the TouchQue SDK.
+// Config holds the configuration options for the Touchque SDK.
 type Config struct {
 	APIKey    string
 	APISecret string

@@ -71,20 +71,20 @@ type LoginRequestOptions struct {
 	// server-side state, never from browser input.
 	Details []LoginDetail
 	// BrowserProof (silent sign-ins): the browser's device-bound key proof,
-	// exactly as the browser sent it (the X-TouchQue-Browser header, made by
+	// exactly as the browser sent it (the X-Touchque-Browser header, made by
 	// @touchque/web). When the user approves this request on the phone (or
-	// with a passkey), TouchQue remembers the browser, so a later Risk.Check
+	// with a passkey), Touchque remembers the browser, so a later Risk.Check
 	// can let the same browser in without asking. Pass it through untouched;
-	// an invalid proof only means "a browser TouchQue does not know".
+	// an invalid proof only means "a browser Touchque does not know".
 	BrowserProof string
-	// Context is for your TouchQue Actions only (event.context): roles, plan,
+	// Context is for your Touchque Actions only (event.context): roles, plan,
 	// amount… Any JSON object up to 4 KB. Never shown on the phone.
 	Context map[string]interface{}
 	// SecurityChanges: when the user's sign-in security last changed in your system.
 	SecurityChanges *SecurityChanges
 	// Destination: where the action sends money or value (shown in full on the phone).
 	Destination *Destination
-	// Locale: "tr" (default) or "en", the language of the rows TouchQue adds.
+	// Locale: "tr" (default) or "en", the language of the rows Touchque adds.
 	Locale string
 	// OnChallenge (VerifyWithOptions only) is called once, right after the
 	// request is created and before any waiting: show ChallengeCode to the
@@ -110,7 +110,7 @@ type VerifyChallenge struct {
 func callOnChallenge(l *slog.Logger, fn func(VerifyChallenge), c VerifyChallenge) {
 	defer func() {
 		if r := recover(); r != nil {
-			sdkLog(l, slog.LevelWarn, "[TouchQue] OnChallenge failed", "error", errorText(r))
+			sdkLog(l, slog.LevelWarn, "[Touchque] OnChallenge failed", "error", errorText(r))
 		}
 	}()
 	fn(c)
@@ -586,7 +586,7 @@ type ReportFraudResponse struct {
 }
 
 // ReportFraud reports a request you later learned was fraud — a chargeback,
-// a confirmed account takeover, a scam the user was talked into. TouchQue's
+// a confirmed account takeover, a scam the user was talked into. Touchque's
 // risk engine learns from it (it is the strongest signal it gets) and the
 // report is kept in your audit log. The request's status does not change.
 // Safe to call more than once: a repeat answers AlreadyReported.

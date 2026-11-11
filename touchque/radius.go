@@ -8,18 +8,18 @@ import (
 	"time"
 )
 
-// DefaultSSOBaseURL is the TouchQue SSO, where an organization's VPN (RADIUS)
+// DefaultSSOBaseURL is the Touchque SSO, where an organization's VPN (RADIUS)
 // apps live. RadiusClient uses it when Config.BaseURL is empty.
 const DefaultSSOBaseURL = "https://sso.touchque.com"
 
-// RadiusClient talks to the RADIUS API of TouchQue SSO: the second factor for
-// an organization's VPN and other RADIUS clients. The TouchQue RADIUS proxy
+// RadiusClient talks to the RADIUS API of Touchque SSO: the second factor for
+// an organization's VPN and other RADIUS clients. The Touchque RADIUS proxy
 // (a program the organization runs in its own network) uses it; you only need
 // it to build your own RADIUS server.
 //
 // The credential is the VPN app's proxy key and secret, created in the
 // dashboard (Organization → VPN & RADIUS). Requests are signed with the
-// secret like every TouchQue API request, so the secret never travels.
+// secret like every Touchque API request, so the secret never travels.
 type RadiusClient struct {
 	http   *httpClient
 	secret string
@@ -27,7 +27,7 @@ type RadiusClient struct {
 
 // NewRadiusClient builds a RadiusClient. config.APIKey and config.APISecret
 // are the VPN app's proxy key ("tq_rad_…") and secret; config.BaseURL is the
-// TouchQue SSO (DefaultSSOBaseURL when empty). TimeoutMs defaults to 35000,
+// Touchque SSO (DefaultSSOBaseURL when empty). TimeoutMs defaults to 35000,
 // above the longest wait the API holds a request for (25 s).
 func NewRadiusClient(config *Config) (*RadiusClient, error) {
 	cfg := *config
@@ -69,7 +69,7 @@ type RadiusApp struct {
 	Vendor string `json:"vendor"`
 	// PrimaryAuth: who checks the password. "directory" (the proxy, against
 	// the company's RADIUS server or LDAP/Active Directory), "touchque" (the
-	// TouchQue account password) or "none" (the VPN checked it already).
+	// Touchque account password) or "none" (the VPN checked it already).
 	PrimaryAuth string `json:"primaryAuth"`
 	// Challenge: how the phone is asked. "number" (the VPN shows a number in
 	// an Access-Challenge and the user types it on the phone) or "push" (a
@@ -78,8 +78,8 @@ type RadiusApp struct {
 	// AllowedNAS: addresses or CIDR ranges of the VPN devices that may ask.
 	// Empty: any device the proxy's configuration lists.
 	AllowedNAS []string `json:"allowedNas"`
-	// OutagePolicy: what the proxy does while it cannot reach TouchQue.
-	// "closed" (refuse), "offline_codes" (accept a code from the TouchQue app,
+	// OutagePolicy: what the proxy does while it cannot reach Touchque.
+	// "closed" (refuse), "offline_codes" (accept a code from the Touchque app,
 	// checked against the outage cache) or "password_only" (the password alone).
 	OutagePolicy string `json:"outagePolicy"`
 	// UsernameDomain: the domain added to a bare user name ("jdoe" → jdoe@domain).
@@ -118,7 +118,7 @@ type RadiusAuthRequest struct {
 	// PrimaryVerified: the proxy checked the password against the company's
 	// directory (PrimaryAuth "directory").
 	PrimaryVerified bool `json:"primaryVerified,omitempty"`
-	// Passcode is a code from the TouchQue app typed after the password
+	// Passcode is a code from the Touchque app typed after the password
 	// ("secret,123456"): no push is sent.
 	Passcode string `json:"passcode,omitempty"`
 	// ChallengeCapable false: this VPN device cannot show an Access-Challenge,
@@ -144,13 +144,13 @@ type RadiusDecision struct {
 	Message string `json:"message,omitempty"`
 	// CaseCode is the "Why?" case code (K7P-2QX) the user reads out to IT.
 	CaseCode string `json:"caseCode,omitempty"`
-	// Email is the TouchQue account the sign-in was for, when known.
+	// Email is the Touchque account the sign-in was for, when known.
 	Email string `json:"email,omitempty"`
 	// ExpiresIn is how many seconds the transaction stays open.
 	ExpiresIn int `json:"expiresIn,omitempty"`
 }
 
-// Config fetches the app's settings (and tells TouchQue the proxy is up).
+// Config fetches the app's settings (and tells Touchque the proxy is up).
 func (r *RadiusClient) Config(ctx context.Context, info RadiusProxyInfo) (*RadiusApp, error) {
 	var out struct {
 		App RadiusApp `json:"app"`
@@ -161,7 +161,7 @@ func (r *RadiusClient) Config(ctx context.Context, info RadiusProxyInfo) (*Radiu
 	return &out.App, nil
 }
 
-// Authenticate starts a VPN sign-in: TouchQue checks the person, the app's
+// Authenticate starts a VPN sign-in: Touchque checks the person, the app's
 // groups and the organization's sign-in policy, then sends the push (or
 // checks the passcode).
 func (r *RadiusClient) Authenticate(ctx context.Context, req RadiusAuthRequest) (*RadiusDecision, error) {
@@ -183,7 +183,7 @@ func (r *RadiusClient) Wait(ctx context.Context, transactionID string, wait time
 	return &out, nil
 }
 
-// Passcode finishes a transaction with a code from the TouchQue app (when the
+// Passcode finishes a transaction with a code from the Touchque app (when the
 // phone has no internet) instead of the push.
 func (r *RadiusClient) Passcode(ctx context.Context, transactionID, passcode string) (*RadiusDecision, error) {
 	body := map[string]string{"passcode": passcode}

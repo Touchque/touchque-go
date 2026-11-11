@@ -2,12 +2,12 @@ package touchque
 
 // Cross App Access: Identity Assertion JWT Authorization Grants (ID-JAG,
 // draft-ietf-oauth-identity-assertion-authz-grant, an open standard). An
-// organization's identity provider (TouchQue SSO) decides which of its apps
+// organization's identity provider (Touchque SSO) decides which of its apps
 // may reach which other service for its members; the app trades a member's ID
 // token for an ID-JAG there, then the ID-JAG for an access token at the other
 // service's authorization server, with no consent screen per member.
 //
-// Your app, signed in with TouchQue SSO (an OpenID Connect app with a secret):
+// Your app, signed in with Touchque SSO (an OpenID Connect app with a secret):
 //
 //	jag, err := touchque.RequestIDJAG(ctx, touchque.RequestIDJAGParams{Issuer: "https://sso.touchque.com",
 //		ClientID: clientID, ClientSecret: secret, IDToken: idToken, Audience: "https://auth.files.example"})

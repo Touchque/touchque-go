@@ -15,7 +15,7 @@ import (
 )
 
 // radiusFake answers the RADIUS API and checks every request's signature the
-// way TouchQue SSO does.
+// way Touchque SSO does.
 func radiusFake(t *testing.T, secret string, handle func(path string, body map[string]interface{}) (int, interface{})) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

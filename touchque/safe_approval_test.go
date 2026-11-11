@@ -3,7 +3,7 @@ package touchque
 // Safe Guard: the verifier against the shared vectors
 // (fixtures/safe-guard-vectors.json, derived from the reference project and
 // shared with every server SDK), and Request / Status / WaitForApproval
-// against the shared fake TouchQue API.
+// against the shared fake Touchque API.
 
 import (
 	"context"

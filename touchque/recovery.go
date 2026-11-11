@@ -12,7 +12,7 @@ import (
 //  1. Let users name colleagues who can vouch for them (SetVouchers), behind
 //     an approval on their phone.
 //  2. When the phone is gone, after the password (or your IdP): Start. Show
-//     BindURI as a QR for the TouchQue app on the new phone, then poll Status
+//     BindURI as a QR for the Touchque app on the new phone, then poll Status
 //     and show each voucher's Code: the user reads it to the colleague on a
 //     call, who types it on their own phone.
 //  3. After the cooling-off nobody vetoed, the account is on the new phone

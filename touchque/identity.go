@@ -1,6 +1,6 @@
 package touchque
 
-// TouchQue Login Management API (client.Identity): your customers' accounts,
+// Touchque Login Management API (client.Identity): your customers' accounts,
 // roles, business-customer organizations, apps, APIs, connections and the
 // tenant itself, from your server with your workspace key.
 //
@@ -15,7 +15,7 @@ import (
 
 func idSeg(v string) string { return url.PathEscape(v) }
 
-// IdentityResource groups the TouchQue Login Management API.
+// IdentityResource groups the Touchque Login Management API.
 type IdentityResource struct {
 	http          *httpClient
 	Users         *IdentityUsers
@@ -45,7 +45,7 @@ func newIdentityResource(h *httpClient) *IdentityResource {
 }
 
 // GetTenant returns the tenant (404 not_enabled until it is set up).
-// RotateClientSecret gives a TouchQue Login application a new client secret,
+// RotateClientSecret gives a Touchque Login application a new client secret,
 // shown once in the answer (clientSecret); the old one stops working.
 func (r *IdentityResource) RotateClientSecret(clientID string) (map[string]interface{}, error) {
 	return r.http.post("/identity/clients/"+idSeg(clientID)+"/rotate-secret", map[string]interface{}{})
@@ -55,7 +55,7 @@ func (r *IdentityResource) GetTenant() (map[string]interface{}, error) {
 	return r.http.get("/identity/tenant")
 }
 
-// UpdateTenant turns TouchQue Login on ({slug, displayName}) or changes its settings.
+// UpdateTenant turns Touchque Login on ({slug, displayName}) or changes its settings.
 func (r *IdentityResource) UpdateTenant(body map[string]interface{}) (map[string]interface{}, error) {
 	return r.http.put("/identity/tenant", body)
 }
@@ -67,7 +67,7 @@ func (r *IdentityResource) RotateSigningKey() (map[string]interface{}, error) {
 
 // SetApproverAppName sets the phone app the hosted pages tell customers to approve on
 // ("Approve on the Acme app"). nil: your brand name when the Mobile SDK is set up, else
-// TouchQue (approverApp in the tenant shows which).
+// Touchque (approverApp in the tenant shows which).
 func (r *IdentityResource) SetApproverAppName(name *string) (map[string]interface{}, error) {
 	return r.http.put("/identity/tenant", map[string]interface{}{"branding": map[string]interface{}{"approverAppName": name}})
 }
@@ -119,7 +119,7 @@ func (r *IdentityResource) SetDelivery(channel string, provider map[string]inter
 	return r.http.put("/identity/delivery/"+idSeg(channel), provider)
 }
 
-// RemoveDelivery goes back to TouchQue's transport.
+// RemoveDelivery goes back to Touchque's transport.
 func (r *IdentityResource) RemoveDelivery(channel string) (map[string]interface{}, error) {
 	return r.http.delete("/identity/delivery/" + idSeg(channel))
 }
@@ -189,7 +189,7 @@ func (u *IdentityUsers) SignOutEverywhere(userID string) (map[string]interface{}
 	return u.http.delete("/identity/users/" + idSeg(userID) + "/sessions")
 }
 
-// ResetMFA removes passkeys, unlinks the TouchQue app, turns email codes off and signs out everywhere.
+// ResetMFA removes passkeys, unlinks the Touchque app, turns email codes off and signs out everywhere.
 func (u *IdentityUsers) ResetMFA(userID string) (map[string]interface{}, error) {
 	return u.http.delete("/identity/users/" + idSeg(userID) + "/mfa")
 }

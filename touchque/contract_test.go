@@ -1,6 +1,6 @@
 package touchque
 
-// Contract tests against the shared fake TouchQue API — a real HTTP round
+// Contract tests against the shared fake Touchque API — a real HTTP round
 // trip, so request signing is verified too (not just mocked). Same
 // scenarios as the Node/Python/PHP SDKs' step-up tests.
 
@@ -287,7 +287,7 @@ func TestContract_GuardLogsOnlyThroughConfigLogger(t *testing.T) {
 	if res := runGuard(logged, GuardInput{User: "jane4@acme.com", Action: "NOT_DEFINED"}); res.Status != 500 {
 		t.Fatalf("unexpected result: %+v", res)
 	}
-	if !strings.Contains(buf.String(), "[TouchQue] misconfigured") || !strings.Contains(buf.String(), "NOT_DEFINED") {
+	if !strings.Contains(buf.String(), "[Touchque] misconfigured") || !strings.Contains(buf.String(), "NOT_DEFINED") {
 		t.Fatalf("expected the misconfiguration in the logger, got %q", buf.String())
 	}
 }

@@ -7,15 +7,15 @@ import (
 	"time"
 )
 
-// MobileResource is the TouchQue Mobile SDK, your backend's side: your own
+// MobileResource is the Touchque Mobile SDK, your backend's side: your own
 // iOS/Android app is the approver of your users (white-label); they never
-// install the TouchQue app.
+// install the Touchque app.
 //
 //  1. A user signed in to your app turns approvals on: CreateEnrollment gives
-//     a one-time token; your app hands it to the SDK (TouchQue.enroll).
+//     a one-time token; your app hands it to the SDK (Touchque.enroll).
 //  2. Ask for approvals as always (Login.Request, Start, the middleware...):
 //     they reach your app over the SDK's encrypted connection.
-//  3. TouchQue holds no push key of your app. For each request it sends you a
+//  3. Touchque holds no push key of your app. For each request it sends you a
 //     signed MOBILE_PUSH webhook: verify it (Webhook), then
 //     MobilePushFromWebhook gives the APNs payload / FCM data to send with
 //     your own credentials.
@@ -227,7 +227,7 @@ func (m *MobileResource) Settings() (*MobileSDKSettings, error) {
 // UpdateSettings changes only the keys given: iosAppIds, androidPackages,
 // androidCerts (package → SHA-256 of its signing certificate),
 // attestation (off | optional | required), enrollTtlSeconds, apns
-// ({keyId, teamId, topic, key: the .p8 text, production}: TouchQue then sends
+// ({keyId, teamId, topic, key: the .p8 text, production}: Touchque then sends
 // the iOS push itself) and fcm ({serviceAccount: the JSON}: the Android push);
 // nil removes a key.
 func (m *MobileResource) UpdateSettings(changes map[string]interface{}) (*MobileSDKSettings, error) {

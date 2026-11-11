@@ -4,7 +4,7 @@ package touchque
 // (SETs, RFC 8417) an identity provider sends when something happens to a
 // person's account after sign-in: CAEP session-revoked, credential-change,
 // device-compliance-change; RISC account-disabled, credential-compromise.
-// TouchQue SSO sends them for an organization's members to the receivers its
+// Touchque SSO sends them for an organization's members to the receivers its
 // admin adds (Organization > Continuous access). Your app ends the person's
 // sessions or asks them to sign in again.
 //
@@ -45,7 +45,7 @@ import (
 	"time"
 )
 
-// SecurityEventTypes are the event types TouchQue sends, by their short name.
+// SecurityEventTypes are the event types Touchque sends, by their short name.
 var SecurityEventTypes = map[string]string{
 	"session-revoked":          "https://schemas.openid.net/secevent/caep/event-type/session-revoked",
 	"credential-change":        "https://schemas.openid.net/secevent/caep/event-type/credential-change",
@@ -78,7 +78,7 @@ type SecurityEvent struct {
 	Audience []string
 	// IssuedAt is seconds since the epoch.
 	IssuedAt int64
-	// TXN carries the case code of TouchQue's decision ("Why?" in the dashboard); empty when none.
+	// TXN carries the case code of Touchque's decision ("Why?" in the dashboard); empty when none.
 	TXN string
 	// Subject is sub_id as sent: {"format": "email", "email": ...} for a person.
 	Subject map[string]interface{}

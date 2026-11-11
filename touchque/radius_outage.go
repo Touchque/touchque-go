@@ -11,10 +11,10 @@ import (
 	"time"
 )
 
-// What a RADIUS proxy keeps for a TouchQue outage: everyone who may use the
+// What a RADIUS proxy keeps for a Touchque outage: everyone who may use the
 // VPN now, with salted, slow digests of their next ~4 hours of codes from the
-// TouchQue app (never a key), so a code typed on the VPN can be checked while
-// TouchQue cannot be reached. TouchQue SSO signs every page with the app's
+// Touchque app (never a key), so a code typed on the VPN can be checked while
+// Touchque cannot be reached. Touchque SSO signs every page with the app's
 // proxy secret; check it with OpenOutagePage before using a page.
 
 // outageSignContext is what the page signature covers before the payload.
@@ -139,7 +139,7 @@ func MatchOutageCode(salt, digests string, fromStep, until int64, iterations, le
 	return matchDigests(d, s, fromStep, until, iterations, length, given, at.Unix()/stepSeconds)
 }
 
-// RadiusOutageEvent is one decision the proxy made while TouchQue could not
+// RadiusOutageEvent is one decision the proxy made while Touchque could not
 // be reached, sent when it can again.
 type RadiusOutageEvent struct {
 	// ID is random hex (16-64 characters): a resend writes nothing twice.
@@ -159,7 +159,7 @@ type RadiusOutageEvent struct {
 	Client RadiusEndUser `json:"client"`
 }
 
-// RadiusOutageLogResult says what TouchQue wrote.
+// RadiusOutageLogResult says what Touchque wrote.
 type RadiusOutageLogResult struct {
 	Written    int `json:"written"`
 	Duplicates int `json:"duplicates"`

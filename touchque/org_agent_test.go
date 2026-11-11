@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// An organization's AI agent on TouchQue SSO against the shared fake API's
+// An organization's AI agent on Touchque SSO against the shared fake API's
 // /sso/token: its own key or its platform's token, a DPoP proof, and calls to
 // an app that checks the proof against the token's key.
 

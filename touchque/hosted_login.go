@@ -1,6 +1,6 @@
 package touchque
 
-// TouchQue Login (hosted sign-in) for your app: an OpenID Connect client for
+// Touchque Login (hosted sign-in) for your app: an OpenID Connect client for
 // your tenant (acme.login.touchque.com or your own domain).
 //
 //	login, _ := touchque.NewHostedLogin(touchque.HostedLoginConfig{Domain: "acme.login.touchque.com", ClientID: id, ClientSecret: secret, RedirectURI: cb})
@@ -144,7 +144,7 @@ type UserApprovalRequest struct {
 	BindingCode string
 }
 
-// HostedLogin is an OpenID Connect client for one TouchQue Login tenant.
+// HostedLogin is an OpenID Connect client for one Touchque Login tenant.
 type HostedLogin struct {
 	Issuer string
 	cfg    HostedLoginConfig
@@ -345,7 +345,7 @@ func (l *HostedLogin) ExchangeToken(ctx context.Context, subjectToken, audience,
 
 // GetConnectionToken (token vault) returns the provider's own access token
 // (Google, Microsoft, GitHub…) for the signed-in user, from a connection that
-// stores tokens. TouchQue refreshes it; the refresh token never leaves.
+// stores tokens. Touchque refreshes it; the refresh token never leaves.
 // userAccessToken is the user's token for this app (or for an app the
 // connection lists). A HostedLoginError invalid_grant means the user has not
 // signed in with the connection since it started storing tokens, or they

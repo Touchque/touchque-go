@@ -3,7 +3,7 @@ package touchque
 // ActionTypesResource manages action types ("LOGIN", "SEND_MONEY", …) —
 // what a user is asked to approve. Define them from code at start-up instead
 // of clicking them into the Dashboard. (Before v4 this was Client.Actions;
-// Client.Actions is TouchQue Actions now.)
+// Client.Actions is Touchque Actions now.)
 type ActionTypesResource struct {
 	http *httpClient
 }

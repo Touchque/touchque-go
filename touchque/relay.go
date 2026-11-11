@@ -49,10 +49,10 @@ import (
 // UserID itself check and return "").
 //
 // Pre-auth routes are rate limited per IP and per username by default
-// (RateLimit), and TouchQue itself caps approval pushes per user. Set
+// (RateLimit), and Touchque itself caps approval pushes per user. Set
 // LoginUser so POST /login and the offline routes only work for a user who
 // already passed YOUR first factor (password step): then nobody can make
-// TouchQue push to, or lock out, an arbitrary user through your server. The
+// Touchque push to, or lock out, an arbitrary user through your server. The
 // offline routes are OFF until you do (or explicitly opt out with
 // AllowOfflineWithoutFirstFactor): with the username taken from the body,
 // anyone could burn a user's offline attempts and lock them out.
@@ -93,7 +93,7 @@ func NewRelayHandler(client *Client, opts RelayOptions) http.Handler {
 			if h.offlineEnabled {
 				tail = ", and so do the offline routes"
 			}
-			sdkLog(client.logger, slog.LevelWarn, "[TouchQue] NewRelayHandler: POST /login takes the username from the request body"+tail+"."+
+			sdkLog(client.logger, slog.LevelWarn, "[Touchque] NewRelayHandler: POST /login takes the username from the request body"+tail+"."+
 				" Set RelayOptions.LoginUser to bind them to your first factor (password step) so they cannot be used against arbitrary users.")
 		})
 	}
@@ -129,9 +129,9 @@ type RelayOptions struct {
 	// POST /login, POST /offline/challenge and POST /offline/totp use this
 	// user and IGNORE any username in the request body; when it returns ""
 	// they answer 401 FIRST_FACTOR_REQUIRED. POST /offline/verify and
-	// POST /passkey/login/verify then only open a session when TouchQue's
+	// POST /passkey/login/verify then only open a session when Touchque's
 	// user matches it. Without it, anyone can type any user's email and make
-	// TouchQue push to that user's phone (push-bombing) or spend that user's
+	// Touchque push to that user's phone (push-bombing) or spend that user's
 	// offline attempts.
 	LoginUser func(*http.Request) string
 
@@ -175,8 +175,8 @@ type RelayOptions struct {
 	IP func(*http.Request) string
 
 	// SilentSignIn for POST /login (default off): a new sign-in whose browser
-	// sent its device-bound key proof (X-TouchQue-Browser, added by
-	// @touchque/web with browserKey: true) first asks TouchQue whether
+	// sent its device-bound key proof (X-Touchque-Browser, added by
+	// @touchque/web with browserKey: true) first asks Touchque whether
 	// anything about it is new. If nothing is, it succeeds at once with no
 	// push (OnAuthenticated gets Via ViaSilent; the answer's assurance.method
 	// is "silent"). Otherwise, and on any error, the usual push starts and its
@@ -185,7 +185,7 @@ type RelayOptions struct {
 	SilentSignIn bool
 	// SilentSignInMaxAgeSeconds is your own limit on how long ago the last
 	// phone approval in that browser may be (0 = always ask). nil leaves it
-	// to TouchQue, which never goes beyond its own limit (7 days).
+	// to Touchque, which never goes beyond its own limit (7 days).
 	SilentSignInMaxAgeSeconds *int
 }
 
@@ -203,7 +203,7 @@ const (
 )
 
 // AuthenticatedInfo is passed to RelayOptions.OnAuthenticated.
-// ExternalUsername always comes from TouchQue or your LoginUser func, never
+// ExternalUsername always comes from Touchque or your LoginUser func, never
 // from the request body.
 type AuthenticatedInfo struct {
 	ExternalUsername string
@@ -335,14 +335,14 @@ func sendAuthResultError(w http.ResponseWriter, err error, logger *slog.Logger) 
 		}
 		writeRelayJSON(w, apiErr.StatusCode, map[string]interface{}{"error": code})
 	default:
-		sdkLog(logger, slog.LevelError, "[TouchQue Relay Error]", "error", errorText(err))
+		sdkLog(logger, slog.LevelError, "[Touchque Relay Error]", "error", errorText(err))
 		writeRelayJSON(w, http.StatusServiceUnavailable, map[string]interface{}{"error": "2FA_UNAVAILABLE", "message": "The 2FA verification service is temporarily unavailable."})
 	}
 }
 
 // sendRelayError is for plain relay routes (enroll, offline, passkey): a
-// client-range TouchQue status is forwarded with its machine-readable code
-// only — never TouchQue's internal message text — anything else becomes 502.
+// client-range Touchque status is forwarded with its machine-readable code
+// only — never Touchque's internal message text — anything else becomes 502.
 func sendRelayError(w http.ResponseWriter, err error) {
 	var apiErr *APIError
 	if errors.As(err, &apiErr) && apiErr.StatusCode < 500 {
@@ -386,7 +386,7 @@ func (h *relayHandler) offlineAllowed(w http.ResponseWriter) bool {
 	}
 	writeRelayJSON(w, http.StatusForbidden, map[string]interface{}{
 		"error":   "OFFLINE_REQUIRES_FIRST_FACTOR",
-		"message": "Offline sign-in is disabled: configure LoginUser (or AllowOfflineWithoutFirstFactor) on the TouchQue relay handler.",
+		"message": "Offline sign-in is disabled: configure LoginUser (or AllowOfflineWithoutFirstFactor) on the Touchque relay handler.",
 	})
 	return false
 }
@@ -444,7 +444,7 @@ func (h *relayHandler) loginUser(w http.ResponseWriter, r *http.Request, body re
 	return typed
 }
 
-// matchesLoginUser reports whether TouchQue's user is the first-factor user.
+// matchesLoginUser reports whether Touchque's user is the first-factor user.
 func (h *relayHandler) matchesLoginUser(r *http.Request, touchqueUser string) bool {
 	expected := h.opts.LoginUser(r)
 	return expected != "" && strings.ToLower(expected) == strings.ToLower(touchqueUser)
@@ -531,7 +531,7 @@ func (h *relayHandler) login(w http.ResponseWriter, r *http.Request, body relayB
 	}
 	// Same two-phase contract as Require: 202 with the step (matching number
 	// / first-time QR / offline QR) until approved; the page re-sends with
-	// X-TouchQue-Token.
+	// X-Touchque-Token.
 	token, offline, code, codeType := guardInputFromRequest(r)
 	in := withSilentSignIn(GuardInput{
 		User: user, Action: h.actionType, Details: h.details(r),
@@ -576,7 +576,7 @@ func (h *relayHandler) login(w http.ResponseWriter, r *http.Request, body relayB
 }
 
 // ── Offline sign: QR challenge / typed code ──────────────────────────
-// The username passed to OnAuthenticated is the one TouchQue returns for the
+// The username passed to OnAuthenticated is the one Touchque returns for the
 // challenge/code, never the one in the request body.
 
 func (h *relayHandler) offlineChallenge(w http.ResponseWriter, r *http.Request, body relayBody) {
@@ -736,7 +736,7 @@ func (h *relayHandler) passkeyApproveVerify(w http.ResponseWriter, r *http.Reque
 		sendRelayError(w, err)
 		return
 	}
-	// Open the session only for the user TouchQue says was approved. A name
+	// Open the session only for the user Touchque says was approved. A name
 	// sent by the browser is never trusted: anyone could approve their own
 	// request and claim to be someone else.
 	if res.Success && h.opts.LoginUser != nil && res.ExternalUsername != "" && !h.matchesLoginUser(r, res.ExternalUsername) {

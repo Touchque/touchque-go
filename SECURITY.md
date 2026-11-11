@@ -1,6 +1,6 @@
 # Security Policy
 
-TouchQue is a 2FA/authentication product. We take reports about this SDK
+Touchque is a 2FA/authentication product. We take reports about this SDK
 seriously and will respond quickly.
 
 ## Reporting a vulnerability
@@ -19,11 +19,11 @@ warrants sooner. We'll credit you in the release notes unless you ask us not to.
 
 ## Scope
 
-In scope: this package (github.com/Touchque/touchque-go/v4) and its published releases. Signature
+In scope: this package (github.com/Touchque/touchque-go/v5) and its published releases. Signature
 verification, secret handling, the guard token, and the framework adapters
 are all fair game.
 
-Out of scope: the TouchQue backend/API itself, the dashboard, and the mobile
+Out of scope: the Touchque backend/API itself, the dashboard, and the mobile
 app — report those to the same address, but they're a separate codebase with
 their own release cycle.
 
@@ -36,11 +36,11 @@ discretion, prioritizing severity.
 
 - The API secret never leaves your server. Browser packages (`@touchque/web`,
   `@touchque/react`) only ever talk to *your* backend, which relays signed
-  requests to TouchQue.
+  requests to Touchque.
 - Every partner request is signed HMAC-SHA256 over
   `METHOD:path[?query]:timestamp:nonce:sha256(body)`; the nonce is single-use
   server-side for 10 minutes, and the timestamp window is ±5/-1 minutes.
-- The step-up "guard token" (`X-TouchQue-Token`) that a partner's browser
+- The step-up "guard token" (`X-Touchque-Token`) that a partner's browser
   page echoes back is itself signed (HMAC, derived from the API secret) and
   binds one user + action + transaction-details digest; it can't be replayed
   for a different amount, recipient or user, and an approval is consumed

@@ -16,7 +16,7 @@ import (
 // action type, the number-match code and a digest of the transaction details
 // the user was shown. It arrives in the SUCCESS webhook ("approvalProof") and
 // in the login status response. Verifying it does not require trusting
-// TouchQue: it proves the enrolled phone signed exactly these details.
+// Touchque: it proves the enrolled phone signed exactly these details.
 type ApprovalProof struct {
 	Version   string `json:"version"`
 	Algorithm string `json:"algorithm"`

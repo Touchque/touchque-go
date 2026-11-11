@@ -11,14 +11,14 @@ import (
 )
 
 // QRPairingsResource pairs a browser by QR code: your page shows a QR code,
-// the person scans it with the TouchQue app, and the phone that scanned is
+// the person scans it with the Touchque app, and the phone that scanned is
 // the one asked to approve.
 //
 //  1. Your page gets the thumbprint of its browser key (@touchque/web
 //     browserKey.thumbprint()) and sends it to your server.
 //  2. Create registers a pairing and returns URI (touchque://pair-browser?…):
 //     show it as a QR code. It can be scanned once, for TTLSeconds (default
-//     120). The nonce in it never leaves your server and the QR: TouchQue
+//     120). The nonce in it never leaves your server and the QR: Touchque
 //     keeps only its hash.
 //  3. Poll Get: "scanned" once a phone holding one of your users' accounts
 //     read it (ExternalUsername, Proximity), "confirmed" once the person went
@@ -57,7 +57,7 @@ type CreateQRPairingOptions struct {
 type CreatedQRPairing struct {
 	PairingID string `json:"pairingId"`
 	ExpiresAt string `json:"expiresAt"`
-	// Nonce is the one-time nonce in the QR code (TouchQue keeps its SHA-256).
+	// Nonce is the one-time nonce in the QR code (Touchque keeps its SHA-256).
 	Nonce string `json:"nonce"`
 	// URI is what the QR code says: touchque://pair-browser?v=1&p=…&n=…&k=….
 	URI string `json:"uri"`

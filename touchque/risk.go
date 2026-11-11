@@ -2,7 +2,7 @@ package touchque
 
 import "context"
 
-// RiskResource is silent sign-ins: ask TouchQue's risk engine whether a
+// RiskResource is silent sign-ins: ask Touchque's risk engine whether a
 // sign-in needs the phone at all, and manage the browsers it knows for a user.
 //
 // A browser becomes known when the user approves a request on the phone (or
@@ -30,7 +30,7 @@ type RiskCheckOptions struct {
 	ClientIP  string
 	UserAgent string
 	// BrowserProof is the browser's device-bound key proof (the
-	// X-TouchQue-Browser header, made by @touchque/web), passed through
+	// X-Touchque-Browser header, made by @touchque/web), passed through
 	// untouched.
 	BrowserProof string
 	// ClientSignals is the end user's page check from @touchque/web
@@ -43,9 +43,9 @@ type RiskCheckOptions struct {
 	DeviceRiskRequestID string
 	// MaxAgeSeconds is your own limit on how long ago the last phone approval
 	// in this browser may be, in seconds; 0 = always ask. nil leaves it to
-	// TouchQue, which never goes beyond its own limit (7 days).
+	// Touchque, which never goes beyond its own limit (7 days).
 	MaxAgeSeconds *int
-	// Context is for your TouchQue Actions only (event.context).
+	// Context is for your Touchque Actions only (event.context).
 	Context map[string]interface{}
 }
 
@@ -62,19 +62,19 @@ type RiskReason struct {
 	Code string `json:"code"`
 	// Text is English.
 	Text string `json:"text"`
-	// Action: with Code "action", the slug of the TouchQue Action that asked.
+	// Action: with Code "action", the slug of the Touchque Action that asked.
 	Action string `json:"action,omitempty"`
 }
 
 // RiskCheckResult is the answer to Check.
 type RiskCheckResult struct {
-	// Prompt is false only when TouchQue answered exactly prompt: false:
+	// Prompt is false only when Touchque answered exactly prompt: false:
 	// nothing about this sign-in is new, let the user in without a push.
 	// Anything else (including an unreadable answer) is true: ask on the
 	// phone as usual.
 	Prompt  bool         `json:"prompt"`
 	Reasons []RiskReason `json:"reasons"`
-	// Assurance is how sure TouchQue is that this is the user: "high",
+	// Assurance is how sure Touchque is that this is the user: "high",
 	// "normal" (the default) or "low".
 	Assurance string `json:"assurance"`
 	// SilentMode is "enforce" or "shadow". In shadow mode silent sign-ins are
@@ -90,7 +90,7 @@ type RiskBrowsersOptions struct {
 	ExternalUsername string
 }
 
-// RiskBrowser is a browser TouchQue knows for a user: one the user approved
+// RiskBrowser is a browser Touchque knows for a user: one the user approved
 // on the phone (or with a passkey). Times are ISO 8601; "" when unset.
 type RiskBrowser struct {
 	// Thumbprint is the RFC 7638 thumbprint of the browser's key: pass it to
@@ -103,7 +103,7 @@ type RiskBrowser struct {
 	// LastMfaMethod is how that approval was given, e.g. "push" or "passkey".
 	LastMfaMethod string `json:"lastMfaMethod,omitempty"`
 	LastSeenAt    string `json:"lastSeenAt,omitempty"`
-	// LastSilentAt is the last sign-in TouchQue let through without asking.
+	// LastSilentAt is the last sign-in Touchque let through without asking.
 	LastSilentAt string `json:"lastSilentAt,omitempty"`
 }
 
@@ -212,7 +212,7 @@ func (rr *RiskResource) Check(ctx context.Context, opts RiskCheckOptions) (*Risk
 	return parseRiskCheck(res), nil
 }
 
-// Browsers lists the browsers TouchQue knows for a user (for an "approved
+// Browsers lists the browsers Touchque knows for a user (for an "approved
 // browsers" list in your settings page).
 func (rr *RiskResource) Browsers(ctx context.Context, opts RiskBrowsersOptions) (*RiskBrowsersResponse, error) {
 	if opts.ExternalUsername == "" {

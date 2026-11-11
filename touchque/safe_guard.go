@@ -8,10 +8,10 @@ import (
 )
 
 // SafeGuardResource is Safe Guard: a Safe transaction approved on the
-// approver's phone for TouchQueSafeGuard (the guard on your Safe). You send
+// approver's phone for TouchqueSafeGuard (the guard on your Safe). You send
 // the raw transaction; the phone gets the raw fields only, decodes them
 // itself, shows its own rows and signs, with a key only its biometrics
-// unlock, a 105-byte approval of the hash it computed. TouchQue never holds a
+// unlock, a 105-byte approval of the hash it computed. Touchque never holds a
 // key that can approve.
 //
 //  1. Request asks the phone (same pipeline as Login.Request: risk engine,
@@ -74,7 +74,7 @@ type SafeGuardRequestOptions struct {
 	UserAgent        string
 }
 
-// SafeGuardDecoded is TouchQue's own decoding, for your logs and screens (the
+// SafeGuardDecoded is Touchque's own decoding, for your logs and screens (the
 // phone decodes for itself). Class: tighten, ordinary, governance or exit.
 type SafeGuardDecoded struct {
 	Class          string           `json:"class"`

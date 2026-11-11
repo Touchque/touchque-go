@@ -60,11 +60,11 @@ func withHeader(k, v string) func(*http.Request) {
 	return func(r *http.Request) { r.Header.Set(k, v) }
 }
 
-// silentClient fails the test if TouchQue is called at all.
+// silentClient fails the test if Touchque is called at all.
 func silentClient(t *testing.T) *Client {
 	t.Helper()
 	c, closeFn := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("TouchQue must not be called, got %s %s", r.Method, r.URL.Path)
+		t.Errorf("Touchque must not be called, got %s %s", r.Method, r.URL.Path)
 		w.WriteHeader(500)
 	})
 	t.Cleanup(closeFn)
@@ -331,7 +331,7 @@ func TestRelay_OfflineRoutesOffWithoutFirstFactor(t *testing.T) {
 	}
 }
 
-func TestRelay_OfflineVerifyUsesTouchQuesUser(t *testing.T) {
+func TestRelay_OfflineVerifyUsesTouchquesUser(t *testing.T) {
 	api := startFakeAPI(t)
 	auth := &authRecorder{}
 	h := mountRelay(api.client(t), RelayOptions{AllowOfflineWithoutFirstFactor: true, OnAuthenticated: auth.fn})
@@ -428,7 +428,7 @@ func TestRelay_PasskeyLoginVerify(t *testing.T) {
 		t.Fatal("no session may be opened on a user mismatch")
 	}
 
-	// Without LoginUser, the session is for TouchQue's user, never the body's.
+	// Without LoginUser, the session is for Touchque's user, never the body's.
 	unbound := mountRelay(c, RelayOptions{OnAuthenticated: auth.fn})
 	rec, out = relayCall(t, unbound, "POST", "/passkey/login/verify", body)
 	if rec.Code != 200 || out["success"] != true {
@@ -657,7 +657,7 @@ func TestRelay_UsernameSprayCappedPerIP(t *testing.T) {
 		t.Fatalf("expected 2 limited requests, got %d", limited)
 	}
 	if n := len(callsTo(api, "/offline/challenge")); n != 4 {
-		t.Fatalf("expected 4 challenges to reach TouchQue, got %d", n)
+		t.Fatalf("expected 4 challenges to reach Touchque, got %d", n)
 	}
 }
 

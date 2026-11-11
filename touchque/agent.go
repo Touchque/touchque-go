@@ -1,6 +1,6 @@
 package touchque
 
-// The agent side: an AI agent calls TouchQue with its OWN key, never with
+// The agent side: an AI agent calls Touchque with its OWN key, never with
 // your API key. Agent signs a private_key_jwt assertion (RFC 7523) for a
 // 10-minute token bound to its key with DPoP (RFC 9449), and proves the key
 // on every call, so a stolen token is useless on its own.
@@ -114,7 +114,7 @@ type AgentConfig struct {
 	TimeoutMs int
 }
 
-// Agent is an AI agent's own TouchQue client.
+// Agent is an AI agent's own Touchque client.
 type Agent struct {
 	AgentID   string
 	alg       string
@@ -182,7 +182,7 @@ func parseAgentKey(value interface{}) (*ecdsa.PrivateKey, ed25519.PrivateKey, st
 	return nil, nil, "", bad
 }
 
-// NewAgent builds an Agent; it checks the configuration, it does not call TouchQue.
+// NewAgent builds an Agent; it checks the configuration, it does not call Touchque.
 func NewAgent(cfg AgentConfig) (*Agent, error) {
 	id := cfg.AgentID
 	if id == "" {
@@ -307,7 +307,7 @@ func agentErrorFrom(resp *http.Response, data map[string]interface{}) *APIError 
 func (a *Agent) do(req *http.Request) (*http.Response, map[string]interface{}, error) {
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, nil, &NetworkError{Message: "TouchQue: network request failed: " + err.Error()}
+		return nil, nil, &NetworkError{Message: "Touchque: network request failed: " + err.Error()}
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
@@ -366,7 +366,7 @@ func (a *Agent) AccessToken() (string, error) {
 }
 
 // request makes a call with the agent's token and a fresh DPoP proof; one
-// retry with a new token when TouchQue no longer knows it.
+// retry with a new token when Touchque no longer knows it.
 func (a *Agent) request(method, path string, body interface{}, retried bool) (map[string]interface{}, error) {
 	token, err := a.AccessToken()
 	if err != nil {
@@ -410,7 +410,7 @@ func (a *Agent) request(method, path string, body interface{}, retried bool) (ma
 	return data, nil
 }
 
-// AgentSelf is the agent as TouchQue sees it.
+// AgentSelf is the agent as Touchque sees it.
 type AgentSelf struct {
 	Agent struct {
 		ID           string   `json:"id"`
@@ -428,13 +428,13 @@ type AgentSelf struct {
 	Scope string `json:"scope"`
 }
 
-// AgentApprovalParams asks a person to approve on their TouchQue phone.
+// AgentApprovalParams asks a person to approve on their Touchque phone.
 type AgentApprovalParams struct {
 	// User is the person the agent acts for (their phone approves).
 	User string
 	// Type is one of the agent's allowed action types.
 	Type string
-	// AuthorizationDetails is what exactly to approve; TouchQue draws the phone's rows from it.
+	// AuthorizationDetails is what exactly to approve; Touchque draws the phone's rows from it.
 	AuthorizationDetails []map[string]interface{}
 	// Reason is the agent's own words, shown on the phone as unverified.
 	Reason string
@@ -511,7 +511,7 @@ type AgentApprovalState struct {
 	Mandate   *Mandate `json:"mandate"`
 }
 
-// RequestApproval asks the person to approve on their TouchQue phone. Show
+// RequestApproval asks the person to approve on their Touchque phone. Show
 // ChallengeCode in your conversation (interactive): the person types it on the phone.
 func (a *Agent) RequestApproval(p AgentApprovalParams) (*AgentApprovalState, error) {
 	body := map[string]interface{}{"externalUsername": p.User, "type": p.Type, "authorizationDetails": p.AuthorizationDetails}
@@ -570,7 +570,7 @@ type AgentConnectionToken struct {
 
 // GetConnectionToken returns, from the token vault, a person's own access
 // token at another service for a connection that names this agent
-// (AgentsResource.Vault). TouchQue refreshes it; the refresh token never
+// (AgentsResource.Vault). Touchque refreshes it; the refresh token never
 // leaves. scope may only narrow what the person granted (empty: all of it).
 func (a *Agent) GetConnectionToken(user, connection, scope string) (*AgentConnectionToken, error) {
 	body := map[string]interface{}{"externalUsername": user, "connection": connection}
@@ -665,7 +665,7 @@ func (a *Agent) WaitForApproval(ctx context.Context, approvalID string, timeout,
 			return nil, &ApprovalError{ApprovalID: approvalID, Status: state.Status, Reason: state.Reason}
 		}
 		if time.Now().Add(interval).After(end) {
-			return nil, &TimeoutError{Message: fmt.Sprintf("TouchQue: approval %q was not approved within %s", approvalID, timeout)}
+			return nil, &TimeoutError{Message: fmt.Sprintf("Touchque: approval %q was not approved within %s", approvalID, timeout)}
 		}
 		select {
 		case <-ctx.Done():
@@ -675,7 +675,7 @@ func (a *Agent) WaitForApproval(ctx context.Context, approvalID string, timeout,
 	}
 }
 
-// Me returns the agent as TouchQue sees it: its action types, owner, review date and workspace.
+// Me returns the agent as Touchque sees it: its action types, owner, review date and workspace.
 func (a *Agent) Me() (*AgentSelf, error) {
 	res, err := a.request("GET", "/agents/me", nil, false)
 	if err != nil {

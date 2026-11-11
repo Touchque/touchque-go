@@ -1,10 +1,10 @@
 # touchque-go
 
-The official Go server SDK for [TouchQue](https://touchque.com) — biometric push
+The official Go server SDK for [Touchque](https://touchque.com) — biometric push
 2FA, passkeys, and offline approval codes, added to any `net/http` backend
 with one middleware wrap per route.
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/Touchque/touchque-go/v4.svg)](https://pkg.go.dev/github.com/Touchque/touchque-go/v4)
+[![Go Reference](https://pkg.go.dev/badge/github.com/Touchque/touchque-go/v5.svg)](https://pkg.go.dev/github.com/Touchque/touchque-go/v5)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 📘 Full docs: **[support.touchque.com](https://support.touchque.com)**
@@ -12,12 +12,12 @@ with one middleware wrap per route.
 ## Install
 
 ```bash
-go get github.com/Touchque/touchque-go/v4
+go get github.com/Touchque/touchque-go/v5
 ```
 
 ## Setup
 
-Get an API key and secret from your [TouchQue Dashboard](https://dashboard.touchque.com):
+Get an API key and secret from your [Touchque Dashboard](https://dashboard.touchque.com):
 
 ```bash
 export TQ_API_KEY=tq_auth_your_key
@@ -31,7 +31,7 @@ in code instead; it panics when they are missing or invalid.
 ## Quick start (net/http)
 
 ```go
-import "github.com/Touchque/touchque-go/v4/touchque"
+import "github.com/Touchque/touchque-go/v5/touchque"
 
 tq, err := touchque.New() // TQ_API_KEY, TQ_API_SECRET
 if err != nil {
@@ -62,10 +62,26 @@ Until the user approves on their phone, `Require` answers
 **`202 {"touchque": step, "token": "..."}`** instead of calling `next`. Your
 frontend renders `step` in its own UI (a matching number, or a QR code the
 first time the user links the app) and sends the same request again with
-header `X-TouchQue-Token: <token>` — see
+header `X-Touchque-Token: <token>` — see
 [`@touchque/web`](https://www.npmjs.com/package/@touchque/web), which does
 this loop for you in the browser. Once approved, the retried request reaches
 `next` exactly once.
+
+## Action types
+
+`"SEND_MONEY"` above is an action type: one kind of approval, with the title the phone shows and
+whether it is critical. Define each one once, in the dashboard (**Developers → Action types**)
+or from code:
+
+```go
+critical := true
+_, err := client.ActionTypes.Define("SEND_MONEY", touchque.DefineOptions{Name: "Send money", Critical: &critical})
+```
+
+The guard refuses what is not ready. A name that is not defined is a setup error
+(`*touchque.ConfigError`, "Unknown action …"): the guard answers 500 with `reason: "misconfigured"`. A type
+turned off in the dashboard answers 403 with `reason: "action_disabled"`, which stops that kind of
+approval at once, without a deploy.
 
 ## Relay handler (every route a frontend needs)
 
@@ -98,15 +114,15 @@ mux.Handle("/touchque/", http.StripPrefix("/touchque", touchque.NewRelayHandler(
   routes answer 401 `UNAUTHORIZED_FOR_2FA` when it returns `""`.
 - With `LoginUser`, usernames in the request body are ignored (401
   `FIRST_FACTOR_REQUIRED` when it returns `""`), and `/offline/verify` and
-  `/passkey/login/verify` only open a session for the user TouchQue reports if
-  it matches. `OnAuthenticated` always receives TouchQue's user, never one from
+  `/passkey/login/verify` only open a session for the user Touchque reports if
+  it matches. `OnAuthenticated` always receives Touchque's user, never one from
   the body.
 - Pre-auth routes are rate limited in memory, per route: 20 requests per IP and
   5 per username per minute (429 `RATE_LIMITED` + `Retry-After`). Tune with
   `RateLimit: &touchque.RateLimitOptions{...}`, or set `Disabled: true` if you
   limit in front. Set `IP` behind a reverse proxy (default: the host of
   `r.RemoteAddr`).
-- TouchQue client errors are forwarded with their machine-readable code only;
+- Touchque client errors are forwarded with their machine-readable code only;
   5xx and network failures become 502 `relay_error`. JSON bodies are read only
   with `Content-Type: application/json`, up to 100 KiB.
 
@@ -136,7 +152,7 @@ and transaction, and can only be consumed once.
 
 Push approval and offline codes stop password reuse and push fatigue, but a
 real-time phishing proxy can still relay them. A passkey can't be phished —
-the browser signs your site's real origin, and TouchQue refuses any other
+the browser signs your site's real origin, and Touchque refuses any other
 (NIST SP 800-63B-4 §3.2.5). Register one via `tq.WebAuthn` on the server and
 `@touchque/web`'s `passkeys.register()` in the browser; optionally require it
 for critical actions in the Dashboard's Security Policy.
@@ -171,7 +187,7 @@ fails verification.
 ```go
 event, err := tq.Webhook.Verify(rawBody, r.Header.Get("X-Signature"))
 if err != nil {
-    w.WriteHeader(http.StatusForbidden) // not from TouchQue
+    w.WriteHeader(http.StatusForbidden) // not from Touchque
     return
 }
 if event["event"] == touchque.EventApprovalRevoked {
@@ -188,7 +204,7 @@ Event webhooks carry `event` (`touchque.Event*`): `DEVICE_LINKED`, `DEVICE_UNLIN
 
 ## Vishing Shield (someone on the phone guiding the user)
 
-The phone tells TouchQue, signed with its hardware key, whether a call was active (or just ended), the screen
+The phone tells Touchque, signed with its hardware key, whether a call was active (or just ended), the screen
 was shared or the phone remote-controlled when the user tapped Approve. Depending on the server's mode:
 
 - **Passkey instead.** A user with a passkey finishes in the browser: the request stays open and turns into
@@ -196,7 +212,7 @@ was shared or the phone remote-controlled when the user tapped Approve. Dependin
   `*touchque.PasskeyRequiredError` (`Reason == "step_up"`). No offline or recovery code can finish such a request.
 - **Refused.** A critical action without a passkey is rejected (`reason: vishing_suspected`).
 - **Provisional.** Anything else is approved with `Provisional` set on `Approval` from `Complete`. Let the user
-  in, but treat the session as limited: TouchQue refuses the user's critical actions (`blocked` / `provisional`)
+  in, but treat the session as limited: Touchque refuses the user's critical actions (`blocked` / `provisional`)
   until the phone re-confirms after the call (`APPROVAL_RECONFIRMED`). `APPROVAL_REVOKED` (`reason` `COACHED` or
   `UNDO`) means end the session; an approval revoked before you consumed it can no longer be consumed
   (409 `revoked`).
@@ -206,11 +222,11 @@ sign-in and sends a beacon to it, so a real-time phishing proxy in front of your
 approval is refused (`reason: phishing_origin`) and the phone warns the user. Allow the canary host in your
 Content-Security-Policy (`img-src` and `connect-src`).
 
-## TouchQue Actions (your code in the approval pipeline)
+## Touchque Actions (your code in the approval pipeline)
 
 Alerts, step-ups and refusals by country, local time, role or amount, passkeys
 for admins — from a template or a few lines of JavaScript, replayed against your
-real recent sign-ins before they go live. Full guide: [Actions](https://support.touchque.com/actions).
+real recent sign-ins before they go live. Full guide: [support.touchque.com/actions](https://support.touchque.com/actions).
 
 ```go
 client.Actions.Deploy("night-alert", touchque.DeployActionOptions{Trigger: "approval.decided",
@@ -261,7 +277,7 @@ approval, err := client.Agents.RedeemApproval(done.ApprovalToken, touchque.Appro
 
 ### Cross App Access (ID-JAG) and A2A agent cards
 
-An organization's identity provider (TouchQue SSO) can let one of its apps reach another service for a member with no consent screen (Cross App Access, ID-JAG, an open IETF draft): the app trades the member's ID token for an ID-JAG, then the ID-JAG for an access token at the other service. If you run an authorization server, the verifier checks an ID-JAG (issuer, single audience, your client, expiry, `typ`) and uses it once. Before your agent trusts another agent's A2A card, check its signatures (A2A 1.0 §8.4: JWS over the RFC 8785 canonical card); keys named by `jku` are only fetched from the card's own host or hosts you trust.
+An organization's identity provider (Touchque SSO) can let one of its apps reach another service for a member with no consent screen (Cross App Access, ID-JAG, an open IETF draft): the app trades the member's ID token for an ID-JAG, then the ID-JAG for an access token at the other service. If you run an authorization server, the verifier checks an ID-JAG (issuer, single audience, your client, expiry, `typ`) and uses it once. Before your agent trusts another agent's A2A card, check its signatures (A2A 1.0 §8.4: JWS over the RFC 8785 canonical card); keys named by `jku` are only fetched from the card's own host or hosts you trust.
 
 ```go
 jag, err := touchque.RequestIDJAG(ctx, touchque.RequestIDJAGParams{Issuer: "https://sso.touchque.com",
@@ -279,11 +295,11 @@ res, err := touchque.VerifyAgentCard(ctx, cardJSON, touchque.VerifyAgentCardOpti
 ## Silent sign-ins (stop asking when nothing is new)
 
 A user who approved on their phone in this browser a little while ago, from the same phone, network and country,
-with no risk signal since, does not need another push. TouchQue's risk engine decides; your server only skips the
+with no risk signal since, does not need another push. Touchque's risk engine decides; your server only skips the
 push when it says so.
 
-1. In the browser, `@touchque/web` 1.4.0 with `createTouchQueWeb({ browserKey: true })` keeps a non-extractable
-   key for your site and sends a fresh, signed proof of it in the `X-TouchQue-Browser` header
+1. In the browser, `@touchque/web` 2.0.0 with `createTouchqueWeb({ browserKey: true })` keeps a non-extractable
+   key for your site and sends a fresh, signed proof of it in the `X-Touchque-Browser` header
    (`touchque.GuardBrowserHeader`).
 2. On the server, turn on `SilentSignIn`:
 
@@ -314,7 +330,7 @@ with the proof attached, so its approval makes the browser known. Polling with t
 `SilentSignInMaxAgeSeconds` (`*int`, seconds; `0` = always ask) sets your own limit on how long ago the last phone
 approval in that browser may be.
 
-TouchQue only lets a sign-in through silently when all of this holds: the browser proved its key and was approved
+Touchque only lets a sign-in through silently when all of this holds: the browser proved its key and was approved
 on the phone (a confirmed push, not one approved during a call, or a passkey) within your limit and at most 7 days
 ago, by the phone that is linked now; the country and the network were seen in the user's earlier approved
 sign-ins; the risk engine allows it with no risk signal; and the action is an everyday one. A critical action always
@@ -337,7 +353,7 @@ res, err := tq.Risk.ForgetBrowsers(ctx, touchque.ForgetBrowsersOptions{ExternalU
 ```
 
 `Login.RequestWithOptions` takes `BrowserProof` too. Forget a user's browsers after a password reset or a "sign out
-everywhere". `Risk.Check` reads the answer fail-closed: `Prompt` is `false` only when TouchQue answered the boolean
+everywhere". `Risk.Check` reads the answer fail-closed: `Prompt` is `false` only when Touchque answered the boolean
 `false`.
 
 ## Never Locked Out (lost, dead or new phone)
@@ -354,7 +370,7 @@ tq.Recovery.SetVouchers(ctx, user, []string{"bo@acme.com", "cy@acme.com"})
 
 // "I lost my phone", after the password:
 r, err := tq.Recovery.Start(ctx, touchque.StartRecoveryOptions{ExternalUsername: user, ClientIP: ip, DisplayName: "Ada", FallbackVouchers: admins})
-showQR(r.BindURI)                        // the TouchQue app on the new phone scans it
+showQR(r.BindURI)                        // the Touchque app on the new phone scans it
 now, _ := tq.Recovery.Status(ctx, r.RecoveryID) // each voucher's Code to read to them
 // now.Status: AWAITING_DEVICE -> VOUCHING -> COOLING -> COMPLETED (or VETOED / EXPIRED / FAILED)
 
@@ -365,7 +381,7 @@ tq.Recovery.Veto(ctx, r.RecoveryID, "admin@acme.com", "") // an admin who does n
 
 Every approval decision names a short case code (`K7P-2QX`: 6 characters, no I, O, 0 or 1). A user who was asked to
 match a number, needed a passkey or was refused reads it out to your support team, and the team opens the whole
-decision by it in the TouchQue dashboard (Logs → Look up a case): what went in, each check's verdict (the access rule
+decision by it in the Touchque dashboard (Logs → Look up a case): what went in, each check's verdict (the access rule
 that matched, the risk signals that were acted on and the ones only measured), and the single change that would have
 let it through. No screenshots, no log digging. The code opens nothing on its own: only your workspace sees its
 decisions.
@@ -406,7 +422,7 @@ panic in it is recovered and logged: the call keeps waiting. The positional `Log
 request, where the page hears nothing until you answer, use the relay or `client.Start`: their first answer already
 carries the number.
 
-## Verifying the device proof (no need to trust TouchQue)
+## Verifying the device proof (no need to trust Touchque)
 
 Every approval from a phone with a hardware key carries `approvalProof`: the phone's own
 signature over the request id, action, number-match code and the exact details it showed.
@@ -414,7 +430,7 @@ signature over the request id, action, number-match code and the exact details i
 ```go
 ok := touchque.VerifyApprovalProof(event["approvalProof"], touchque.VerifyApprovalProofOptions{
     RequestID: requestID, Type: "WITHDRAW", Details: details, ChallengeCode: challengeCode,
-    ExpectedPublicKey: user.TouchQueDeviceKey, // stored from their first verified approval
+    ExpectedPublicKey: user.TouchqueDeviceKey, // stored from their first verified approval
 })
 ```
 
@@ -424,7 +440,7 @@ use — store the proof's `PublicKey`, then pin it).
 ## Reporting fraud
 
 Learned later that an approved request was fraud? Report it — it is the strongest signal
-TouchQue's risk engine learns from, and it stays in your audit log:
+Touchque's risk engine learns from, and it stays in your audit log:
 
 ```go
 _, err := tq.Login.ReportFraud(requestID, touchque.ReportFraudOptions{Reason: touchque.FraudChargeback})
@@ -432,11 +448,11 @@ _, err := tq.Login.ReportFraud(requestID, touchque.ReportFraudOptions{Reason: to
 
 ## VPN and other RADIUS clients (`RadiusClient`)
 
-The TouchQue RADIUS proxy (a program your company runs next to its VPN) asks
-TouchQue SSO for the second factor of a VPN sign-in through `RadiusClient`. You
+The Touchque RADIUS proxy (a program your company runs next to its VPN) asks
+Touchque SSO for the second factor of a VPN sign-in through `RadiusClient`. You
 only need it to build your own RADIUS server. The key and secret are a VPN app's
 proxy credential (dashboard: Organization → VPN & RADIUS); requests are signed
-like every TouchQue API call.
+like every Touchque API call.
 
 ```go
 rc, err := touchque.NewRadiusClient(&touchque.Config{APIKey: "tq_rad_…", APISecret: secret})
@@ -456,7 +472,7 @@ case "pending": // a plain push
 
 ## Pairing a browser by QR code
 
-Your page shows a QR code, the person scans it with the TouchQue app, and the phone that scanned is the one asked to approve, with number matching. Your page sends the thumbprint of its browser key (`@touchque/web` `browserKey.thumbprint()`); the nonce in the QR never leaves your server (TouchQue keeps its hash).
+Your page shows a QR code, the person scans it with the Touchque app, and the phone that scanned is the one asked to approve, with number matching. Your page sends the thumbprint of its browser key (`@touchque/web` `browserKey.thumbprint()`); the nonce in the QR never leaves your server (Touchque keeps its hash).
 
 ```go
 p, err := client.QRPairings.Create(ctx, touchque.CreateQRPairingOptions{KeyThumbprint: thumb, ClientIP: ip, UserAgent: r.UserAgent()})
@@ -472,7 +488,7 @@ if now.State == "confirmed" {
 
 ## A code typed back on the phone
 
-When a sign-in needs a code another service sent the person (a text message, WhatsApp, e-mail), ask them to type it on the phone instead. The phone encrypts it to a one-time key you made for this request: TouchQue only ever holds the ciphertext. Such a request lives 5 minutes.
+When a sign-in needs a code another service sent the person (a text message, WhatsApp, e-mail), ask them to type it on the phone instead. The phone encrypts it to a one-time key you made for this request: Touchque only ever holds the ciphertext. Such a request lives 5 minutes.
 
 ```go
 key, err := touchque.NewCodeReplyKey() // keep key.PrivateKey for this request
@@ -486,7 +502,7 @@ if status.Reply != nil {
 
 ## Safe Guard (Safe transactions approved on the phone)
 
-TouchQueSafeGuard is a transaction guard for a Safe: a transaction runs only with approvals signed by the P-256 keys on its approvers' phones. You send the raw transaction; the phone decodes it itself, shows its own rows and signs what it computed with a key only its biometrics unlock. Delegatecalls, changes to the Safe and proxy upgrades are governance: scheduled, time-locked and vetoable. A phone without that key yet gets `409 crypto_key_missing`.
+TouchqueSafeGuard is a transaction guard for a Safe: a transaction runs only with approvals signed by the P-256 keys on its approvers' phones. You send the raw transaction; the phone decodes it itself, shows its own rows and signs what it computed with a key only its biometrics unlock. Delegatecalls, changes to the Safe and proxy upgrades are governance: scheduled, time-locked and vetoable. A phone without that key yet gets `409 crypto_key_missing`.
 
 ```go
 target := touchque.SafeTxTarget{ChainID: "1", Safe: safe, Guard: guard,
@@ -516,7 +532,7 @@ if check.Purpose == "approve" {
 }
 ```
 
-`VerifySafeApproval` makes the guard's check off chain, so a co-signer or your own server never has to trust TouchQue: it computes the Safe transaction hash (EIP-712) and the governance hash from the raw fields, rebuilds the 149-byte message the phone signed and checks the P-256 signature. It refuses a high `s`, an approval that expired or is valid for more than a day, another approver index, and, when you pass `Rows` or `DisplayDigest` from your own decoding, rows the phone did not show. Without `Purpose` only an ordinary approval (`approve`) is valid: a `schedule` approval covers the governance hash, which has no Safe nonce, so it passes only when you name `Purpose: "schedule"`. `Reason` is `approval_malformed`, `public_key_invalid`, `approver_index_mismatch`, `approval_expired`, `rows_differ`, `high_s` or `signature_invalid`; an error only means the target is not a Safe transaction. `SafeTxHash`, `SafeGovernanceHash`, `SafeApprovalMessage` and `SafeDisplayDigest` are exported too. Standard library only.
+`VerifySafeApproval` makes the guard's check off chain, so a co-signer or your own server never has to trust Touchque: it computes the Safe transaction hash (EIP-712) and the governance hash from the raw fields, rebuilds the 149-byte message the phone signed and checks the P-256 signature. It refuses a high `s`, an approval that expired or is valid for more than a day, another approver index, and, when you pass `Rows` or `DisplayDigest` from your own decoding, rows the phone did not show. Without `Purpose` only an ordinary approval (`approve`) is valid: a `schedule` approval covers the governance hash, which has no Safe nonce, so it passes only when you name `Purpose: "schedule"`. `Reason` is `approval_malformed`, `public_key_invalid`, `approver_index_mismatch`, `approval_expired`, `rows_differ`, `high_s` or `signature_invalid`; an error only means the target is not a Safe transaction. `SafeTxHash`, `SafeGovernanceHash`, `SafeApprovalMessage` and `SafeDisplayDigest` are exported too. Standard library only.
 
 ## Shared Signals (security events from Touchque SSO)
 
@@ -582,22 +598,22 @@ a repeat.
 `APIError`, `NetworkError`, `RejectedError`, `TimeoutError`,
 `WebhookSignatureError`, `ConfigError` — check with `errors.As`.
 
-A feature your organization cannot use here comes back as a 403 `*APIError` with `Feature` set (`device_risk`, `ai_agents`…); match it with `errors.Is(err, touchque.ErrFeatureNotInPlan)`, `ErrFeatureReadOnly` or `ErrFeatureOff` (`ErrFeature` for any of them) — not in its plan (an owner or admin adds it in the TouchQue dashboard), being turned off (reads work for 14 days, changes are refused) or switched off on this TouchQue deployment.
+A feature your organization cannot use here comes back as a 403 `*APIError` with `Feature` set (`device_risk`, `ai_agents`…); match it with `errors.Is(err, touchque.ErrFeatureNotInPlan)`, `ErrFeatureReadOnly` or `ErrFeatureOff` (`ErrFeature` for any of them) — not in its plan (an owner or admin adds it in the Touchque dashboard), being turned off (reads work for 14 days, changes are refused) or switched off on this Touchque deployment.
 
 ## Security
 
 - Every API request is signed HMAC-SHA256 (method, path+query, timestamp, nonce, body hash).
-- The `X-TouchQue-Token` a frontend echoes back is itself signed and bound to
+- The `X-Touchque-Token` a frontend echoes back is itself signed and bound to
   one user + action + transaction digest.
 - An approval is consumed exactly once, server-side.
 - Your API secret never leaves your server.
 
-See [SECURITY.md](./SECURITY.md) to report a vulnerability.
+See [SECURITY.md](https://github.com/Touchque/touchque-go/blob/main/SECURITY.md) to report a vulnerability.
 
 ## Requirements
 
 - Go 1.26+ (the module's go directive)
-- A [TouchQue Dashboard](https://dashboard.touchque.com) account
+- A [Touchque Dashboard](https://dashboard.touchque.com) account
 
 ## Logging
 
@@ -605,8 +621,8 @@ The SDK writes nothing to the standard `log` package. To see its own problems (a
 
 ## License
 
-MIT © [TouchQue](https://touchque.com)
+MIT © [Touchque](https://touchque.com)
 
-## TouchQue Login (hosted sign-in)
+## Touchque Login (hosted sign-in)
 
-Sign-up and sign-in pages for your own customers, on your brand, with OpenID Connect. See [Touchque Login](https://support.touchque.com/touchque-login) for this SDK's client and a quickstart.
+Sign-up and sign-in pages for your own customers, on your brand, with OpenID Connect. See [support.touchque.com/touchque-login](https://support.touchque.com/touchque-login) for this SDK's client and a quickstart.

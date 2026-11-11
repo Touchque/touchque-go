@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// APIError represents an error returned by the TouchQue API (status >= 400).
+// APIError represents an error returned by the Touchque API (status >= 400).
 type APIError struct {
 	StatusCode int
 	Message    string
@@ -29,17 +29,17 @@ type APIError struct {
 }
 
 func (e *APIError) Error() string {
-	return fmt.Sprintf("TouchQue API Error (HTTP %d): %s", e.StatusCode, e.Message)
+	return fmt.Sprintf("Touchque API Error (HTTP %d): %s", e.StatusCode, e.Message)
 }
 
 // The organization behind your workspace cannot use a feature here (HTTP
 // 403). An *APIError matches one of these with errors.Is, and ErrFeature for
 // any of the three; its Feature field names the feature:
 //   - ErrFeatureNotInPlan: not in its plan (feature_not_in_plan); an owner or
-//     admin adds it in the TouchQue dashboard;
+//     admin adds it in the Touchque dashboard;
 //   - ErrFeatureReadOnly: being turned off (feature_read_only); reads still
 //     work for 14 days, changes are refused;
-//   - ErrFeatureOff: switched off on this TouchQue deployment (feature_off).
+//   - ErrFeatureOff: switched off on this Touchque deployment (feature_off).
 var (
 	ErrFeature          = errors.New("touchque: feature not available")
 	ErrFeatureNotInPlan = errors.New("touchque: feature not in the organization's plan")
@@ -131,9 +131,9 @@ type PasskeyRequiredError struct {
 
 func (e *PasskeyRequiredError) Error() string {
 	if e.Reason == "step_up" {
-		return fmt.Sprintf("TouchQue: request %q must now be approved with a passkey: the user approved on the phone during a call.", e.RequestID)
+		return fmt.Sprintf("Touchque: request %q must now be approved with a passkey: the user approved on the phone during a call.", e.RequestID)
 	}
-	return fmt.Sprintf("TouchQue: request %q must be approved with a passkey (phishing-resistant policy); no push was sent.", e.RequestID)
+	return fmt.Sprintf("Touchque: request %q must be approved with a passkey (phishing-resistant policy); no push was sent.", e.RequestID)
 }
 
 // ApprovalError means an AI agent's approval ended without a usable approval:
@@ -147,16 +147,16 @@ type ApprovalError struct {
 
 func (e *ApprovalError) Error() string {
 	if e.Reason != "" {
-		return fmt.Sprintf("TouchQue: approval %q is %s (%s)", e.ApprovalID, e.Status, e.Reason)
+		return fmt.Sprintf("Touchque: approval %q is %s (%s)", e.ApprovalID, e.Status, e.Reason)
 	}
-	return fmt.Sprintf("TouchQue: approval %q is %s", e.ApprovalID, e.Status)
+	return fmt.Sprintf("Touchque: approval %q is %s", e.ApprovalID, e.Status)
 }
 
 // ApprovalMismatchError means an approval token does not say what you are
 // about to execute (another person, action type, amount, recipient…), or it
-// is not a valid token from TouchQue. Do not execute.
+// is not a valid token from Touchque. Do not execute.
 type ApprovalMismatchError struct {
 	Message string
 }
 
-func (e *ApprovalMismatchError) Error() string { return "TouchQue: " + e.Message }
+func (e *ApprovalMismatchError) Error() string { return "Touchque: " + e.Message }

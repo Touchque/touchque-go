@@ -1,6 +1,6 @@
 package touchque
 
-// The TouchQue Login My Account API (/me/v1) from your server: the signed-in
+// The Touchque Login My Account API (/me/v1) from your server: the signed-in
 // customer's own profile, sign-in methods, devices, apps and data, called
 // with their access token for audience https://<domain>/me/.
 //
@@ -172,8 +172,8 @@ func (m *MyAccount) RemovePasskey(ctx context.Context, id string) error {
 	return err
 }
 
-// UnlinkTouchQueApp needs a recent sign-in.
-func (m *MyAccount) UnlinkTouchQueApp(ctx context.Context) error {
+// UnlinkTouchqueApp needs a recent sign-in.
+func (m *MyAccount) UnlinkTouchqueApp(ctx context.Context) error {
 	_, err := m.call(ctx, http.MethodDelete, "/authentication-methods/touchque", nil)
 	return err
 }

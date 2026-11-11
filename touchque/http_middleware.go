@@ -26,17 +26,17 @@ type RequireOptions struct {
 	// X-Forwarded-For hop; never the leftmost hop, which the client controls).
 	IP func(*http.Request) string
 	// SilentSignIn (default off): a new attempt whose browser sent its
-	// device-bound key proof (X-TouchQue-Browser, added by @touchque/web with
-	// browserKey: true) first asks TouchQue whether anything about it is new.
+	// device-bound key proof (X-Touchque-Browser, added by @touchque/web with
+	// browserKey: true) first asks Touchque whether anything about it is new.
 	// If nothing is, next runs at once with no push (the approval's
 	// Assurance.Method is "silent", with Reasons). Otherwise, and on any
 	// error, the usual push starts and its approval makes the browser known.
 	SilentSignIn bool
 	// SilentSignInMaxAgeSeconds is your own limit on how long ago the last
 	// phone approval in that browser may be (0 = always ask). nil leaves it
-	// to TouchQue, which never goes beyond its own limit (7 days).
+	// to Touchque, which never goes beyond its own limit (7 days).
 	SilentSignInMaxAgeSeconds *int
-	// Context is for your TouchQue Actions only (event.context): roles,
+	// Context is for your Touchque Actions only (event.context): roles,
 	// plan, amount… Never shown on the phone.
 	Context func(*http.Request) map[string]interface{}
 }
@@ -89,7 +89,7 @@ func guardInputFromRequest(r *http.Request) (token, offline, code, codeType stri
 // Until the user approves on their phone this answers
 // 202 {"touchque": step, "token": "..."}. Your page shows the step in its own
 // design and sends the same request again with header
-// "X-TouchQue-Token: <token>". Once approved, next runs exactly once, with
+// "X-Touchque-Token: <token>". Once approved, next runs exactly once, with
 // the approval available via ApprovalFromContext(r.Context()).
 func Require(client *Client, action string, next http.Handler, opts RequireOptions) http.Handler {
 	userOf := opts.User

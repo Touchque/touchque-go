@@ -2,7 +2,7 @@ package touchque
 
 import "testing"
 
-// VerifyWithOptions' OnChallenge against the shared fake TouchQue API: the
+// VerifyWithOptions' OnChallenge against the shared fake Touchque API: the
 // number reaches the caller before the wait (the callback approves, so the
 // call could not finish otherwise), and a callback that panics does not stop
 // the wait. Same scenarios as the Node SDK.

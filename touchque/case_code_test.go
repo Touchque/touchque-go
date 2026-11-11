@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// "Why?" case codes against the shared fake TouchQue API: every decision names
+// "Why?" case codes against the shared fake Touchque API: every decision names
 // one, the step shows it with plain reasons, a refusal and the raw API error
 // carry it, and the silent check returns it. Same scenarios as the Node SDK.
 

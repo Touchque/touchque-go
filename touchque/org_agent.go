@@ -1,11 +1,11 @@
 package touchque
 
-// An organization's AI agent on TouchQue SSO (Organization → AI agents in
+// An organization's AI agent on Touchque SSO (Organization → AI agents in
 // the dashboard): it gets 5-minute tokens for one of the organization's apps,
 // proving who it is with its own key (private_key_jwt) or with the token its
 // platform already gives it (GitHub Actions, GitLab, Google Cloud, Azure,
 // Kubernetes), and binds each token to a DPoP key made when it starts. The app
-// checks the token with TouchQue's JWKS and the DPoP proof on every call.
+// checks the token with Touchque's JWKS and the DPoP proof on every call.
 //
 //	agent, _ := touchque.NewOrgAgent(touchque.OrgAgentConfig{AgentID: "oagt_…", PrivateKey: os.Getenv("TQ_ORG_AGENT_KEY")})
 //	req, _ := http.NewRequest("GET", "https://payments.acme.com/invoices", nil)
@@ -50,7 +50,7 @@ var orgAgentIDPattern = regexp.MustCompile(`^oagt_[a-z2-9]{20}$`)
 type OrgAgentConfig struct {
 	// AgentID: the oagt_… id; default TQ_ORG_AGENT_ID.
 	AgentID string
-	// Issuer: TouchQue SSO; default TQ_SSO_URL or https://sso.touchque.com.
+	// Issuer: Touchque SSO; default TQ_SSO_URL or https://sso.touchque.com.
 	Issuer string
 	// PrivateKey: its own key (a JWK map or JSON, a PEM, or a Go private key); default TQ_ORG_AGENT_KEY.
 	PrivateKey interface{}
@@ -87,7 +87,7 @@ type OrgAgentConnectionToken struct {
 // SharedAccountAsk is an agent's ask to open a shared account for a member.
 type SharedAccountAsk struct {
 	AskID string
-	// OpenURL is the page the member opens in the browser where their TouchQue extension is paired.
+	// OpenURL is the page the member opens in the browser where their Touchque extension is paired.
 	OpenURL   string
 	Status    string
 	ExpiresIn int
@@ -111,7 +111,7 @@ type AskMemberParams struct {
 	AuthorizationDetails []map[string]interface{}
 	Resource             string
 	Scope                string
-	// RequestedExpiry in seconds (30-600); the push lives at most as long as TouchQue lets it.
+	// RequestedExpiry in seconds (30-600); the push lives at most as long as Touchque lets it.
 	RequestedExpiry int
 }
 
@@ -198,7 +198,7 @@ func signerFor(ec *ecdsa.PrivateKey, ed ed25519.PrivateKey) *Agent {
 	return &Agent{alg: "ES256", ec: ec, publicJWK: ecPublicJWK(&ec.PublicKey)}
 }
 
-// NewOrgAgent builds an OrgAgent; it checks the configuration, it does not call TouchQue.
+// NewOrgAgent builds an OrgAgent; it checks the configuration, it does not call Touchque.
 func NewOrgAgent(cfg OrgAgentConfig) (*OrgAgent, error) {
 	id := cfg.AgentID
 	if id == "" {
@@ -311,7 +311,7 @@ func (a *OrgAgent) post(path string, fields map[string]string, dpop bool) (map[s
 	}
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, &NetworkError{Message: "TouchQue: network request failed: " + err.Error()}
+		return nil, &NetworkError{Message: "Touchque: network request failed: " + err.Error()}
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -366,9 +366,9 @@ func (a *OrgAgent) GetToken(resource, scope string) (*OrgAgentToken, error) {
 
 // GetConnectionToken returns, from the token vault, a member's own access token
 // at another service (Google, Microsoft 365, GitHub…) they connected on
-// TouchQue, for a connection that names this agent. subjectToken is the
+// Touchque, for a connection that names this agent. subjectToken is the
 // member's token, as for ExchangeToken; scope may only narrow what the member
-// granted (empty: all of it). TouchQue refreshes it; the refresh token never
+// granted (empty: all of it). Touchque refreshes it; the refresh token never
 // leaves. An APIError invalid_grant means the member has not connected it (or
 // disconnected, or left).
 func (a *OrgAgent) GetConnectionToken(subjectToken, connection, scope string) (*OrgAgentConnectionToken, error) {
@@ -411,7 +411,7 @@ func (a *OrgAgent) ExchangeToken(subjectToken, resource, scope string) (*OrgAgen
 
 // AskToOpenSharedAccount asks to open a shared account (its key, from
 // Organization → AI agents → Access) for a member. They open OpenURL in the
-// browser where their TouchQue extension is paired; their phone approves with
+// browser where their Touchque extension is paired; their phone approves with
 // this agent named and the extension signs in there. The agent never sees the
 // password. message (at most 64 characters) is shown marked unverified.
 func (a *OrgAgent) AskToOpenSharedAccount(account, loginHint, message string) (*SharedAccountAsk, error) {

@@ -54,7 +54,7 @@ type RedeemedApproval struct {
 
 // RedeemApproval uses an agent's approval exactly once, right before you
 // execute: expect is checked against the token first (nothing is used on a
-// mismatch), then TouchQue checks the token and marks it used, and the answer
+// mismatch), then Touchque checks the token and marks it used, and the answer
 // is checked again. Errors: *ApprovalMismatchError, or an *APIError
 // (already_redeemed, token_expired, provisional…).
 func (r *AgentsResource) RedeemApproval(token string, expect ApprovalExpectation) (*RedeemedApproval, error) {
@@ -124,7 +124,7 @@ func (r *AgentsResource) ApprovalAudience() (string, error) {
 	return r.audience, nil
 }
 
-// VerifyApprovalToken verifies an approval token offline (TouchQue's
+// VerifyApprovalToken verifies an approval token offline (Touchque's
 // published keys, expiry, aud, expect). aud must be this workspace's: an
 // empty audience means ApprovalAudience, and a token without aud or for
 // another workspace is refused. It does not make the token single-use:
@@ -156,7 +156,7 @@ func newAgentsResource(http *httpClient) *AgentsResource {
 }
 
 // AgentVaultResource is the token vault for your agents: after your own
-// OAuth flow with a person, deposit their tokens; TouchQue keeps them sealed
+// OAuth flow with a person, deposit their tokens; Touchque keeps them sealed
 // and refreshes them, and the agents a connection names get a short-lived
 // access token (Agent.GetConnectionToken), never the refresh token.
 type AgentVaultResource struct {

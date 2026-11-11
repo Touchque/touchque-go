@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// McpAuth (an MCP server whose authorization server is TouchQue SSO) against
+// McpAuth (an MCP server whose authorization server is Touchque SSO) against
 // the shared fake API's MCP issuer: metadata, audience, issuer, expiry, scopes
 // per tool, DPoP-bound tokens and their proofs, and the middleware.
 

@@ -11,9 +11,9 @@ import (
 	"testing"
 )
 
-// TouchQue Actions in the Go SDK: every management call sends exactly what
+// Touchque Actions in the Go SDK: every management call sends exactly what
 // the shared vectors (fixtures/actions-api-vectors.json) say, against the
-// shared fake TouchQue API, signed like the real API.
+// shared fake Touchque API, signed like the real API.
 
 type actionVector struct {
 	Name    string                 `json:"name"`

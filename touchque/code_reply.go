@@ -4,7 +4,7 @@ package touchque
 // sign-in code another service sent them (a text message, WhatsApp, e-mail).
 // Each request gets a one-time P-256 key pair; its public key goes with the
 // request, the phone encrypts what was typed to it, and only you can open it:
-// TouchQue stores and hands back nothing but the ciphertext
+// Touchque stores and hands back nothing but the ciphertext
 // (LoginStatusResponse.Reply.CT).
 //
 // ECDH P-256, HKDF-SHA256 (salt: the request id, info

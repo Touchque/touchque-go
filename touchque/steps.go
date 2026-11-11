@@ -83,13 +83,13 @@ type Approval struct {
 	ConfirmedVia  string      `json:"confirmedVia,omitempty"`
 	ApprovalProof interface{} `json:"approvalProof,omitempty"`
 	// Vishing Shield: Provisional means approved during a call. Let the user
-	// in, but treat the session as limited: TouchQue refuses their critical
+	// in, but treat the session as limited: Touchque refuses their critical
 	// actions until the phone re-confirms (EventApprovalReconfirmed), and
 	// EventApprovalRevoked means end it.
 	ShieldFields
 	// Reasons is set on silent sign-ins only (Assurance.Method "silent",
 	// ConfirmedVia "SILENT", RequestID "silent"): nothing was sent to the
-	// phone, and these say why TouchQue let this known browser in.
+	// phone, and these say why Touchque let this known browser in.
 	Reasons []RiskReason `json:"reasons,omitempty"`
 }
 
@@ -106,10 +106,10 @@ type StartOptions struct {
 	// when the user has no linked phone.
 	NoEnroll bool
 	// BrowserProof (silent sign-ins): the browser's device-bound key proof
-	// (X-TouchQue-Browser), passed through untouched. Once the user approves,
-	// TouchQue knows this browser.
+	// (X-Touchque-Browser), passed through untouched. Once the user approves,
+	// Touchque knows this browser.
 	BrowserProof string
-	// Context is for your TouchQue Actions only (event.context). Never shown on the phone.
+	// Context is for your Touchque Actions only (event.context). Never shown on the phone.
 	Context map[string]interface{}
 }
 

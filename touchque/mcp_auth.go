@@ -1,12 +1,12 @@
 package touchque
 
-// For an MCP server whose authorization server is TouchQue SSO (Organization
+// For an MCP server whose authorization server is Touchque SSO (Organization
 // → MCP servers in the dashboard; issuer https://sso.touchque.com/mcp):
 //
 //   - ProtectedResourceMetadata is its RFC 9728 document, served at
-//     MetadataPaths, so MCP clients find TouchQue and ask for a token for
+//     MetadataPaths, so MCP clients find Touchque and ask for a token for
 //     exactly this server;
-//   - Verify checks a request's token: signed by TouchQue (its JWKS), this
+//   - Verify checks a request's token: signed by Touchque (its JWKS), this
 //     issuer, audience = this server's URL (RFC 8707), not expired, and for a
 //     DPoP-bound token a fresh proof for this request; *McpAuthError carries
 //     the status (401, 403) and the WWW-Authenticate header to send;
@@ -41,9 +41,9 @@ import (
 
 // McpAuthConfig configures NewMcpAuth.
 type McpAuthConfig struct {
-	// Issuer is TouchQue SSO's MCP issuer, e.g. https://sso.touchque.com/mcp.
+	// Issuer is Touchque SSO's MCP issuer, e.g. https://sso.touchque.com/mcp.
 	Issuer string
-	// Resource is this MCP server's URL, exactly as registered in TouchQue.
+	// Resource is this MCP server's URL, exactly as registered in Touchque.
 	Resource string
 	// Tools maps a tool name to the scope it needs (also listed as scopes_supported).
 	Tools map[string]string
@@ -80,7 +80,7 @@ type McpAuthError struct {
 
 func (e *McpAuthError) Error() string { return fmt.Sprintf("touchque: %s (%s)", e.Message, e.Code) }
 
-// McpAuth verifies tokens TouchQue SSO issued for one MCP server.
+// McpAuth verifies tokens Touchque SSO issued for one MCP server.
 type McpAuth struct {
 	issuer, resource, name string
 	tools                  map[string]string
@@ -97,7 +97,7 @@ type McpAuth struct {
 // NewMcpAuth needs Issuer and Resource.
 func NewMcpAuth(cfg McpAuthConfig) (*McpAuth, error) {
 	if cfg.Issuer == "" || cfg.Resource == "" {
-		return nil, &ConfigError{Message: "McpAuth needs Issuer (TouchQue SSO's MCP issuer) and Resource (this server's URL)"}
+		return nil, &ConfigError{Message: "McpAuth needs Issuer (Touchque SSO's MCP issuer) and Resource (this server's URL)"}
 	}
 	if _, err := url.Parse(cfg.Resource); err != nil {
 		return nil, &ConfigError{Message: "Resource must be a URL"}
@@ -295,7 +295,7 @@ func (m *McpAuth) claims(ctx context.Context, token string) (map[string]interfac
 	}
 	alg, _ := head["alg"].(string)
 	if head["typ"] != "at+jwt" || (alg != "RS256" && alg != "ES256") {
-		return nil, m.fail(401, "invalid_token", "Not a TouchQue access token", "")
+		return nil, m.fail(401, "invalid_token", "Not a Touchque access token", "")
 	}
 	kid, _ := head["kid"].(string)
 	key, err := m.keyFor(ctx, kid)
@@ -335,7 +335,7 @@ func (m *McpAuth) Verify(r *http.Request) (*McpClaims, error) {
 	scheme = strings.ToLower(scheme)
 	token = strings.TrimSpace(token)
 	if (scheme != "bearer" && scheme != "dpop") || strings.Count(token, ".") != 2 {
-		return nil, m.fail(401, "missing_token", "A TouchQue access token is required", "")
+		return nil, m.fail(401, "missing_token", "A Touchque access token is required", "")
 	}
 	claims, err := m.claims(r.Context(), token)
 	if err != nil {

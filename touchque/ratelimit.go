@@ -7,7 +7,7 @@ import (
 )
 
 // A small in-memory fixed-window rate limiter for NewRelayHandler's pre-auth
-// routes. It protects the partner's own server (and their TouchQue quota) from
+// routes. It protects the partner's own server (and their Touchque quota) from
 // scripted abuse of routes anyone on the internet can call. It is per process:
 // behind several instances, each keeps its own counters, which still caps abuse
 // per instance. Use your own shared limiter in front of the handler if you need
