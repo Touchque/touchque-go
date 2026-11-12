@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -139,7 +140,8 @@ func TestEnrollQRExpiry(t *testing.T) {
 	}
 }
 
-func TestRunGuardWithANilClientIsMisconfigured(t *testing.T) {
+func TestRunGuardWithANilClientWithoutKeysIsMisconfigured(t *testing.T) {
+	noKeys(t)
 	if res := RunGuard(context.Background(), nil, GuardInput{User: "jane@acme.com", Action: "LOGIN"}); res.Status != 500 ||
 		res.Body.Error.Code != "misconfigured" || res.Body.Touchque.Reason != "misconfigured" {
 		t.Fatalf("status=%d body=%+v", res.Status, res.Body)
@@ -147,10 +149,103 @@ func TestRunGuardWithANilClientIsMisconfigured(t *testing.T) {
 	if res := RunGuard(context.Background(), nil, GuardInput{Action: "LOGIN"}); res.Status != 401 {
 		t.Fatalf("no user: status=%d", res.Status)
 	}
+	if defaultClient.client.Load() != nil {
+		t.Fatal("a failed build is not kept: the next call tries again")
+	}
 }
 
-func TestIsStatusPollWithANilClientIsFalse(t *testing.T) {
+func TestIsStatusPollWithANilClientWithoutKeysIsFalse(t *testing.T) {
+	noKeys(t)
 	if IsStatusPoll(nil, GuardInput{User: "jane@acme.com", Action: "LOGIN", Token: "v1.e30.x"}) {
-		t.Fatal("a nil client cannot verify a token: not a status poll")
+		t.Fatal("no client can be built: not a status poll")
+	}
+}
+
+// A nil client is the default one, built from the environment once the keys are there, and shared
+// by RunGuard, IsStatusPoll and Require.
+func TestRunGuardWithANilClientUsesTheSharedDefaultClient(t *testing.T) {
+	noKeys(t)
+	api := startFakeAPI(t)
+	api.link("jane@acme.com")
+	ctx := context.Background()
+	in := GuardInput{User: "jane@acme.com", Action: "SEND_MONEY", Details: []LoginDetail{{Label: "Amount", Value: "5 EUR"}}}
+	if res := RunGuard(ctx, nil, in); res.Status != 500 {
+		t.Fatalf("without keys: status=%d", res.Status)
+	}
+
+	withKeys(t, api)
+	first := RunGuard(ctx, nil, in)
+	if first.Status != 202 || first.Body.Touchque.State != StepWaiting {
+		t.Fatalf("with keys: status=%d body=%+v", first.Status, first.Body)
+	}
+	built := defaultClient.client.Load()
+	if built == nil {
+		t.Fatal("the default client is kept once built")
+	}
+	poll := in
+	poll.Token = first.Body.Token
+	if !IsStatusPoll(nil, poll) {
+		t.Fatal("IsStatusPoll(nil, …) verifies the token with the same default client")
+	}
+
+	// Require(nil, …) answers the poll with the same client and runs the handler once approved.
+	api.approve("")
+	if rec := serve(requireHandler(nil, "SEND_MONEY"), "jane@acme.com", first.Body.Token); rec.Code != 200 ||
+		!strings.Contains(rec.Body.String(), `"done":true`) {
+		t.Fatalf("Require(nil): status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if defaultClient.client.Load() != built {
+		t.Fatal("Require(nil, …) and RunGuard(ctx, nil, …) share one default client")
+	}
+}
+
+func TestTheDefaultClientIsBuiltOnceUnderConcurrentUse(t *testing.T) {
+	noKeys(t)
+	t.Setenv("TQ_API_KEY", "tq_test_key")
+	t.Setenv("TQ_API_SECRET", "test_secret")
+	got := make([]*Client, 32)
+	var wg sync.WaitGroup
+	for i := range got {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			got[i] = defaultClient.get(nil)
+		}(i)
+	}
+	wg.Wait()
+	for i, c := range got {
+		if c == nil || c != got[0] {
+			t.Fatalf("call %d got another client: %p, want %p", i, c, got[0])
+		}
+	}
+}
+
+// A status answer without expiresAt: the poll falls back to the token's Rx; a token without Rx (5.1)
+// answers without expiresAt, as before.
+func TestGuard_WithoutALiveExpiryPollsCarryRxAndA51TokenNone(t *testing.T) {
+	c, closeFn := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/login/request":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"requestId": "req_1", "expiresAt": "2030-01-01T00:00:30.000Z"})
+		case r.Method == http.MethodGet && r.URL.Path == "/login/status/req_1":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": "PENDING"}) // no expiresAt
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	defer closeFn()
+	first := runGuard(c, GuardInput{User: "jane@acme.com", Action: "LOGIN"})
+	poll := runGuard(c, GuardInput{User: "jane@acme.com", Action: "LOGIN", Token: first.Body.Token})
+	if poll.Body.Touchque.State != StepWaiting || poll.Body.Touchque.ExpiresAt != "2030-01-01T00:00:30.000Z" ||
+		VerifyGuardToken("shh", poll.Body.Token).Rx != VerifyGuardToken("shh", first.Body.Token).Rx {
+		t.Fatalf("rx: %+v", poll.Body.Touchque)
+	}
+	claims := VerifyGuardToken("shh", first.Body.Token)
+	claims.Rx = 0
+	old := runGuard(c, GuardInput{User: "jane@acme.com", Action: "LOGIN", Token: SignGuardToken("shh", *claims)}) // a 5.1 token
+	if old.Status != 202 || old.Body.Touchque.State != StepWaiting || old.Body.Touchque.ExpiresAt != "" ||
+		VerifyGuardToken("shh", old.Body.Token).Rx != 0 {
+		t.Fatalf("5.1 token: status=%d step=%+v", old.Status, old.Body.Touchque)
 	}
 }

@@ -237,6 +237,9 @@ type LoginStatusResponse struct {
 	RequiresPasskey bool       `json:"requiresPasskey,omitempty"`
 	ConfirmedVia    string     `json:"confirmedVia,omitempty"`
 	Assurance       *Assurance `json:"assurance,omitempty"`
+	// ExpiresAt is the request's live expiry (ISO 8601): a Vishing Shield
+	// escalation to a passkey extends it.
+	ExpiresAt string `json:"expiresAt,omitempty"`
 	// Reply: a request made with Reply, once the person typed it back (the
 	// ciphertext only; OpenCodeReply opens it). nil for a CONFIRMED request
 	// approved without typing (an older app).

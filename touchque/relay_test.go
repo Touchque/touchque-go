@@ -284,8 +284,8 @@ func TestRelay_PreAuthLoginNeverHandsAnUnlinkedUserALinkingQR(t *testing.T) {
 	h := mountRelay(api.client(t), RelayOptions{RateLimit: &RateLimitOptions{Disabled: true}})
 	rec, out := relayCall(t, h, "POST", "/login", map[string]interface{}{"externalUsername": "new@example.com"})
 	tq, _ := out["touchque"].(map[string]interface{})
-	if rec.Code != 202 || tq["state"] != "enroll" || tq["enroll"] != nil {
-		t.Fatalf("expected 202 enroll without a QR, got %d %s", rec.Code, rec.Body.String())
+	if rec.Code != 202 || tq["state"] != "enroll" || tq["reason"] != "enrollment_off" || tq["enroll"] != nil {
+		t.Fatalf("expected 202 enroll (enrollment_off) without a QR, got %d %s", rec.Code, rec.Body.String())
 	}
 	if len(callsTo(api, "/auth/generate-secret")) != 0 {
 		t.Fatal("a pre-auth login must not issue a linking secret")

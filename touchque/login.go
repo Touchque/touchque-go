@@ -345,6 +345,9 @@ func (l *LoginResource) statusCtx(ctx context.Context, requestID string) (*Login
 	if v, ok := res["confirmedVia"].(string); ok {
 		resp.ConfirmedVia = v
 	}
+	if v, ok := res["expiresAt"].(string); ok {
+		resp.ExpiresAt = v
+	}
 	resp.Assurance = parseAssurance(res)
 	resp.ShieldFields = parseShieldFields(res)
 	if r, ok := res["reply"].(map[string]interface{}); ok {

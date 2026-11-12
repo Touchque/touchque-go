@@ -34,7 +34,8 @@ type GuardInput struct {
 	// NoEnroll: never issue a first-time linking QR (and recovery codes) for a
 	// user without a phone. Set it whenever User is not proven by your own
 	// sign-in, e.g. a typed username before the password step: the QR would
-	// let anyone link their own phone to that account.
+	// let anyone link their own phone to that account. Such a user gets 202
+	// {"touchque": {"state": "enroll", "reason": "enrollment_off"}}: stop polling.
 	NoEnroll    bool
 	Action      string
 	Details     []LoginDetail
@@ -86,11 +87,16 @@ type GuardBody struct {
 }
 
 // GuardResult is the outcome of one RunGuard call: either Approved is set
-// (run the protected action) or Body/Status describe what to send instead.
+// (run the protected action) or Body/Status describe what to send instead
+// (WriteGuardResult sends them).
 type GuardResult struct {
 	Approved *Approval
 	Status   int
 	Body     *GuardBody
+
+	// logger is where WriteGuardResult reports an ErrorBody that failed: the
+	// client's Config.Logger (Require's Logger for Require's answers).
+	logger *slog.Logger
 }
 
 const tokenTTLMs = 10 * 60 * 1000
@@ -107,10 +113,16 @@ const enrollQRMarginMs = 15 * 1000
 // after 7.5 s). The poll that renews an expiring QR, and a replayed old token,
 // still count; a first-time-QR poll that starts something after all (the
 // phone got linked, the QR expired meanwhile) is charged through
-// GuardInput.BeforeStart, so only pure link-state reads stay free.
+// GuardInput.BeforeStart, so only pure link-state reads stay free. A nil c
+// is the default client (see RunGuard): false while it cannot be built.
 func isStatusPoll(c *Client, in GuardInput) bool {
-	if c == nil || in.User == "" || in.Token == "" || in.Offline || in.Code != "" {
+	if in.User == "" || in.Token == "" || in.Offline || in.Code != "" {
 		return false
+	}
+	if c == nil {
+		if c = defaultClient.get(nil); c == nil {
+			return false
+		}
 	}
 	t := verifyGuardToken(c.apiSecret, in.Token)
 	if t == nil || t.U != in.User || t.A != in.Action || t.D != detailsDigest(in.Details) || t.R != in.ReferenceID {
@@ -125,19 +137,28 @@ func isStatusPoll(c *Client, in GuardInput) bool {
 // IsStatusPoll reports whether in only polls an approval already on its way,
 // or keeps the first-time QR (see RunGuard), so a rate limit you put in front
 // of RunGuard may let it through; set GuardInput.BeforeStart to charge the
-// polls that start something after all. False for a nil client.
+// polls that start something after all. A nil c is the default client, as
+// for RunGuard: false while it cannot be built.
 func IsStatusPoll(c *Client, in GuardInput) bool { return isStatusPoll(c, in) }
 
 // RunGuard is the step-up guard behind Require and the relay, for a framework
 // without an adapter (gin, echo, chi …) or inside your handler, after your own
 // checks: build in from the request and its X-Touchque-* headers
 // (GuardTokenHeader …), then run the protected action when Approved is set,
-// else answer Status with Body as JSON, with Cache-Control: no-store (and
-// Retry-After on 423 and 429). Same contract as Require; ctx (the request's)
-// cancels the silent sign-in check. It never panics for Touchque: API errors
-// answer 503 unavailable, a missing setup (or a nil c) 500 misconfigured.
+// else send the answer with WriteGuardResult (Status, the headers and Body as
+// JSON). Same contract as Require; ctx (the request's) cancels the silent
+// sign-in check. It never panics for Touchque: API errors answer 503
+// unavailable, a missing setup 500 misconfigured.
+//
+// A nil c is the default client: built from TQ_API_KEY / TQ_API_SECRET /
+// TQ_API_URL (New) on first use and shared with Require(nil, …) once built,
+// so the environment is read once per process unless SetDefaultClient resets
+// it. While it cannot be built, RunGuard answers 500 misconfigured (401
+// without a user) and the next call tries again. The default client built
+// from the environment logs nothing: SetDefaultClient a client with
+// Config.Logger to hear the guard's lines.
 func RunGuard(ctx context.Context, c *Client, in GuardInput) GuardResult {
-	return runGuardContext(ctx, c, in)
+	return runGuardContext(ctx, c, in, nil)
 }
 
 // runGuard is the framework-agnostic step-up guard shared by every net/http
@@ -149,15 +170,33 @@ func RunGuard(ctx context.Context, c *Client, in GuardInput) GuardResult {
 //	not set up / API down   -> 500 misconfigured / 503 unavailable
 //
 // While the first-time QR is up, polls answer {"touchque": {"state": "enroll",
-// "expiresAt": ...}} without "enroll": keep showing the QR you have. A new QR
-// comes with enroll.qrCodeDataUrl when the old one expired.
+// "expiresAt": ...}} without "enroll": keep showing the QR you have. About
+// 15 s before it expires, a poll brings a new QR in enroll.qrCodeDataUrl with
+// new recovery codes; the old QR and the old codes stop working.
+//
+// While a push waits, every poll carries the request's expiresAt in the
+// "waiting" / "passkey_required" step: the live one from the status answer
+// (a passkey escalation extends it), else the one in the token (claim Rx).
+//
+// NoEnroll: a user with no phone gets {"state": "enroll", "reason":
+// "enrollment_off"} (still 202), never a QR. Stop polling.
 func runGuard(c *Client, in GuardInput) GuardResult {
-	return runGuardContext(context.Background(), c, in)
+	return runGuardContext(context.Background(), c, in, nil)
 }
 
 // runGuardContext is runGuard bound to ctx (the incoming request's): it
 // cancels the silent sign-in check, which then falls back to the usual start.
-func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult {
+// logger, when not nil, hears the guard's lines instead of the client's
+// Config.Logger (Require(nil, …) passes its Logger); the result carries it for
+// WriteGuardResult.
+func runGuardContext(ctx context.Context, c *Client, in GuardInput, logger *slog.Logger) (res GuardResult) {
+	if c == nil {
+		c = defaultClient.get(logger) // nil while TQ_API_KEY / TQ_API_SECRET are not set: the next call tries again
+	}
+	if logger == nil && c != nil {
+		logger = c.logger // the default client's too (SetDefaultClient)
+	}
+	defer func() { res.logger = logger }()
 	if in.User == "" {
 		return GuardResult{Status: 401, Body: &GuardBody{
 			Touchque: Step{State: StepBlocked, Reason: "unauthenticated"},
@@ -189,8 +228,17 @@ func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult 
 				claims.Ee = ee
 			}
 		}
+		if step.State == StepWaiting || step.State == StepPasskeyRequired {
+			// The request's expiry: every poll repeats it.
+			if rx, ok := isoMs(step.ExpiresAt); ok {
+				claims.Rx = rx
+			}
+		}
 		if extra.Ee != 0 {
 			claims.Ee = extra.Ee
+		}
+		if extra.Rx != 0 {
+			claims.Rx = extra.Rx
 		}
 		if extra.N != "" {
 			claims.N = extra.N
@@ -221,7 +269,7 @@ func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult 
 			res, err = c.Offline.Verify(bound.Oc, in.Code)
 		}
 		if err != nil {
-			return errorResult(c, err)
+			return errorResult(logger, err)
 		}
 		forThis := (res.ExternalUsername == "" || strings.EqualFold(res.ExternalUsername, in.User)) && (res.Type == "" || res.Type == in.Action)
 		if res.Approved && forThis {
@@ -240,10 +288,10 @@ func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult 
 			}}
 		}
 		if res.Reason == "invalid_code" && !isTotp {
-			return issue(Step{State: StepOffline, Offline: &OfflineStep{ChallengeID: bound.Oc, AttemptsLeft: res.AttemptsLeft}}, guardClaims{Oc: bound.Oc, Rid: bound.Rid, N: bound.N})
+			return issue(Step{State: StepOffline, Offline: &OfflineStep{ChallengeID: bound.Oc, AttemptsLeft: res.AttemptsLeft}}, guardClaims{Oc: bound.Oc, Rid: bound.Rid, N: bound.N, Rx: bound.Rx})
 		}
 		if res.Reason == "invalid_code" {
-			return issue(Step{State: StepOffline, Reason: "invalid_code"}, guardClaims{Oc: bound.Oc, Rid: bound.Rid, N: bound.N})
+			return issue(Step{State: StepOffline, Reason: "invalid_code"}, guardClaims{Oc: bound.Oc, Rid: bound.Rid, N: bound.N, Rx: bound.Rx})
 		}
 		// The phone rejected the push this QR belongs to: the whole sign-in is over.
 		if res.Reason == "request_rejected" {
@@ -251,7 +299,7 @@ func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult 
 		}
 		// The push now waits for a passkey (Vishing Shield): no code may finish it.
 		if res.Reason == "passkey_required" && bound.Rid != "" {
-			return issue(Step{State: StepPasskeyRequired, RequestID: bound.Rid, Number: bound.N}, guardClaims{N: bound.N})
+			return issue(Step{State: StepPasskeyRequired, RequestID: bound.Rid, Number: bound.N, ExpiresAt: requestExpiry(bound, "")}, guardClaims{N: bound.N})
 		}
 		state := StepBlocked
 		if res.Reason == "expired" {
@@ -267,9 +315,9 @@ func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult 
 	if in.Offline {
 		// Link the QR to the push it follows: a phone-side rejection kills it, and a push that asked
 		// for number matching makes the QR ask for the same number.
-		rid := ""
+		rid, rx := "", int64(0)
 		if bound != nil {
-			rid = bound.Rid
+			rid, rx = bound.Rid, bound.Rx
 		}
 		ch, err := c.Offline.Challenge(OfflineChallengeOptions{
 			ExternalUsername: in.User, Type: in.Action, Details: norm, ClientIP: in.IP, UserAgent: in.UserAgent, RequestID: rid,
@@ -280,7 +328,7 @@ func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult 
 			}
 			// The push it would follow now waits for a passkey (Vishing Shield): no QR, run the passkey.
 			if apiErr, ok := err.(*APIError); ok && rid != "" && (apiErr.Code == "passkey_required" || dataError(apiErr) == "passkey_required") {
-				return issue(Step{State: StepPasskeyRequired, RequestID: rid, Number: bound.N}, guardClaims{N: bound.N})
+				return issue(Step{State: StepPasskeyRequired, RequestID: rid, Number: bound.N, ExpiresAt: requestExpiry(bound, "")}, guardClaims{N: bound.N})
 			}
 			if apiErr, ok := err.(*APIError); ok && apiErr.StatusCode < 500 {
 				reason := apiErr.Code
@@ -292,7 +340,7 @@ func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult 
 				}
 				return issue(Step{State: StepBlocked, Reason: reason}, guardClaims{})
 			}
-			return errorResult(c, err)
+			return errorResult(logger, err)
 		}
 		n := ch.ChallengeCode
 		if n == "" && bound != nil {
@@ -301,7 +349,7 @@ func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult 
 		return issue(Step{State: StepOffline, Offline: &OfflineStep{
 			ChallengeID: ch.ChallengeID, QRDataURL: ch.QRDataURL, ExpiresAt: ch.ExpiresAt, TotpAvailable: ch.TotpAvailable,
 			ChallengeCode: ch.ChallengeCode,
-		}}, guardClaims{Rid: rid, N: n})
+		}}, guardClaims{Rid: rid, N: n, Rx: rx})
 	}
 
 	// Waiting on a push / passkey — or showing the offline QR next to a push that is still open: poll, and run
@@ -309,7 +357,7 @@ func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult 
 	if bound != nil && bound.Rid != "" && (bound.St == string(StepWaiting) || bound.St == string(StepPasskeyRequired) || bound.St == string(StepOffline)) {
 		now, err := c.Check(bound.Rid)
 		if err != nil {
-			return errorResult(c, err)
+			return errorResult(logger, err)
 		}
 		if now.State == StepApproved {
 			approval, cerr := c.Complete(bound.Rid, in.User, in.Action, CompleteExpect{Details: in.Details, ReferenceID: in.ReferenceID})
@@ -321,21 +369,24 @@ func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult 
 					}
 					return issue(Step{State: StepExpired, Reason: reason}, guardClaims{})
 				}
-				return errorResult(c, cerr)
+				return errorResult(logger, cerr)
 			}
 			return GuardResult{Status: 200, Approved: approval}
 		}
+		// The request's live expiry (a passkey escalation extends it), else the token's Rx.
+		expiresAt := requestExpiry(bound, now.ExpiresAt)
 		// The push behind the QR was moved to a passkey after a tap during a call
 		// (Vishing Shield): the QR's code would be refused now, so switch to the passkey.
 		if bound.St == string(StepOffline) && now.State == StepPasskeyRequired {
-			return issue(Step{State: StepPasskeyRequired, RequestID: bound.Rid, Number: bound.N}, guardClaims{N: bound.N})
+			return issue(Step{State: StepPasskeyRequired, RequestID: bound.Rid, Number: bound.N, ExpiresAt: expiresAt}, guardClaims{N: bound.N})
 		}
 		if bound.St == string(StepOffline) && (now.State == StepWaiting || now.State == StepExpired) {
 			// Still (or no longer) pending: nothing changed for the user — keep showing the QR they have.
-			return issue(Step{State: StepOffline, Offline: &OfflineStep{ChallengeID: bound.Oc}}, guardClaims{Oc: bound.Oc, Rid: bound.Rid, N: bound.N})
+			return issue(Step{State: StepOffline, Offline: &OfflineStep{ChallengeID: bound.Oc}}, guardClaims{Oc: bound.Oc, Rid: bound.Rid, N: bound.N, Rx: requestExpiryMs(bound, now.ExpiresAt)})
 		}
 		if now.State == StepWaiting || now.State == StepPasskeyRequired {
-			return issue(Step{State: now.State, RequestID: bound.Rid, Number: bound.N, CaseCode: bound.Cc}, guardClaims{N: bound.N})
+			// Every poll carries the request's expiresAt, so a page reading the latest answer stops in time.
+			return issue(Step{State: now.State, RequestID: bound.Rid, Number: bound.N, ExpiresAt: expiresAt, CaseCode: bound.Cc}, guardClaims{N: bound.N})
 		}
 		return issue(Step{State: now.State, RequestID: bound.Rid}, guardClaims{})
 	}
@@ -345,7 +396,7 @@ func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult 
 	if bound != nil && bound.St == string(StepEnroll) && bound.Ee > 0 {
 		gone, err := linkedOrQRGone(c, in.User)
 		if err != nil {
-			return errorResult(c, err)
+			return errorResult(logger, err)
 		}
 		if !gone && nowMs() < bound.Ee-enrollQRMarginMs {
 			return issue(Step{State: StepEnroll, ExpiresAt: isoFromMs(bound.Ee)}, guardClaims{Ee: bound.Ee})
@@ -374,7 +425,7 @@ func runGuardContext(ctx context.Context, c *Client, in GuardInput) GuardResult 
 		BrowserProof: browserProof, Context: in.Context,
 	})
 	if err != nil {
-		return errorResult(c, err)
+		return errorResult(logger, err)
 	}
 	return issue(*step, guardClaims{})
 }
@@ -410,6 +461,30 @@ func withSilentSignIn(in GuardInput, header func(string) string, on bool, maxAge
 	return in
 }
 
+// requestExpiryMs is the bound request's expiry, ms since the epoch: live,
+// the status answer's expiresAt, when it parses (a Vishing Shield escalation
+// to a passkey extends it), else the token's claim Rx; 0 when neither (a 5.1
+// token).
+func requestExpiryMs(bound *guardClaims, live string) int64 {
+	if ms, ok := isoMs(live); ok {
+		return ms
+	}
+	if bound == nil {
+		return 0
+	}
+	return bound.Rx
+}
+
+// requestExpiry is requestExpiryMs as the expiresAt of a waiting /
+// passkey_required step ("" when unknown). The token issued for the step
+// keeps it as its claim Rx.
+func requestExpiry(bound *guardClaims, live string) string {
+	if ms := requestExpiryMs(bound, live); ms > 0 {
+		return isoFromMs(ms)
+	}
+	return ""
+}
+
 // linkedOrQRGone reports whether user linked a phone (Used, or a DeviceID) or
 // their first-time QR is gone (404). Other errors are returned.
 func linkedOrQRGone(c *Client, user string) (bool, error) {
@@ -430,12 +505,12 @@ func misconfiguredResult() GuardResult {
 	}}
 }
 
-func errorResult(c *Client, err error) GuardResult {
+func errorResult(logger *slog.Logger, err error) GuardResult {
 	if _, ok := err.(*ConfigError); ok {
-		sdkLog(c.logger, slog.LevelError, "[Touchque] misconfigured", "error", errorText(err))
+		sdkLog(logger, slog.LevelError, "[Touchque] misconfigured", "error", errorText(err))
 		return misconfiguredResult()
 	}
-	sdkLog(c.logger, slog.LevelError, "[Touchque] approval failed", "error", errorText(err))
+	sdkLog(logger, slog.LevelError, "[Touchque] approval failed", "error", errorText(err))
 	return GuardResult{Status: 503, Body: &GuardBody{
 		Touchque: Step{State: StepBlocked, Reason: "unavailable"},
 		Error:    &GuardError{Code: "unavailable", Message: "Two-factor approval is temporarily unavailable."},

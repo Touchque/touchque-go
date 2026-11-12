@@ -574,7 +574,7 @@ func (h *relayHandler) login(w http.ResponseWriter, r *http.Request, body relayB
 		}
 		return &GuardResult{Status: http.StatusTooManyRequests, Body: &GuardBody{Touchque: Step{State: StepRateLimited, RetryAfter: refusedWait}}}
 	}
-	result := runGuardContext(r.Context(), h.client, in)
+	result := runGuardContext(r.Context(), h.client, in, nil)
 	if refusedWait > 0 {
 		writeRateLimited(w, refusedWait) // the usual 429
 		return

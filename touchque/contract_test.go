@@ -460,8 +460,128 @@ func TestContract_IsStatusPollCountsABoundEnrollToken(t *testing.T) {
 
 	// No expiry (an enroll step without a QR, or a 5.0 token): every poll starts again, as before.
 	old := runGuard(c, GuardInput{User: user, Action: "LOGIN", NoEnroll: true})
-	if old.Body.Touchque.Enroll != nil || VerifyGuardToken("test_secret", old.Body.Token).Ee != 0 ||
+	if old.Body.Touchque.Enroll != nil || old.Body.Touchque.Reason != "enrollment_off" || VerifyGuardToken("test_secret", old.Body.Token).Ee != 0 ||
 		IsStatusPoll(c, GuardInput{User: user, Action: "LOGIN", Token: old.Body.Token}) {
 		t.Fatalf("no expiry: %+v", old.Body)
+	}
+}
+
+// ── 5.2: polls repeat expiresAt, NoEnroll says why ───────────────────────
+
+func TestContract_WaitingPollsRepeatTheRequestsExpiresAt(t *testing.T) {
+	api := startFakeAPI(t)
+	api.link("jane@acme.com")
+	c := api.client(t)
+	in := GuardInput{User: "jane@acme.com", Action: "LOGIN"}
+	first := runGuard(c, in)
+	expiresAt := first.Body.Touchque.ExpiresAt
+	rx, ok := isoMs(expiresAt)
+	if !ok || VerifyGuardToken("test_secret", first.Body.Token).Rx != rx {
+		t.Fatalf("first: expiresAt=%q claims=%+v", expiresAt, VerifyGuardToken("test_secret", first.Body.Token))
+	}
+	in.Token = first.Body.Token
+	for i := 0; i < 2; i++ { // every poll, not only the first answer
+		poll := runGuard(c, in)
+		if poll.Status != 202 || poll.Body.Touchque.State != StepWaiting || poll.Body.Touchque.ExpiresAt != expiresAt ||
+			VerifyGuardToken("test_secret", poll.Body.Token).Rx != rx {
+			t.Fatalf("poll %d: status=%d step=%+v", i, poll.Status, poll.Body.Touchque)
+		}
+		in.Token = poll.Body.Token
+	}
+}
+
+// Vishing Shield: the escalation keeps the request open 180 s for the passkey ceremony. The poll answers
+// that live expiry, not the push's first one, and the token keeps it as Rx.
+func TestContract_APollAfterAPasskeyEscalationCarriesTheExtendedExpiry(t *testing.T) {
+	api := startFakeAPI(t)
+	api.link("jane@acme.com")
+	c := api.client(t)
+	first := runGuard(c, GuardInput{User: "jane@acme.com", Action: "LOGIN"})
+	pushed, _ := isoMs(first.Body.Touchque.ExpiresAt)
+	api.escalate("")
+	passkey := runGuard(c, GuardInput{User: "jane@acme.com", Action: "LOGIN", Token: first.Body.Token})
+	extended, ok := isoMs(passkey.Body.Touchque.ExpiresAt)
+	if passkey.Body.Touchque.State != StepPasskeyRequired || !ok || extended-pushed < 100000 || extended-nowMs() < 170000 {
+		t.Fatalf("passkey: %+v (pushed %d)", passkey.Body.Touchque, pushed)
+	}
+	if rx := VerifyGuardToken("test_secret", passkey.Body.Token).Rx; rx != extended {
+		t.Fatalf("rx = %d, want %d", rx, extended)
+	}
+	again := runGuard(c, GuardInput{User: "jane@acme.com", Action: "LOGIN", Token: passkey.Body.Token})
+	if again.Body.Touchque.State != StepPasskeyRequired || again.Body.Touchque.ExpiresAt != passkey.Body.Touchque.ExpiresAt {
+		t.Fatalf("again: %+v", again.Body.Touchque)
+	}
+}
+
+func TestContract_PasskeyRequiredPollsRepeatTheRequestsExpiresAt(t *testing.T) {
+	api := startFakeAPI(t)
+	api.link("jane@acme.com")
+	api.opts(map[string]interface{}{"passkeyOnly": true})
+	c := api.client(t)
+	first := runGuard(c, GuardInput{User: "jane@acme.com", Action: "LOGIN"})
+	rx, ok := isoMs(first.Body.Touchque.ExpiresAt)
+	if first.Body.Touchque.State != StepPasskeyRequired || !ok {
+		t.Fatalf("first: %+v", first.Body.Touchque)
+	}
+	poll := runGuard(c, GuardInput{User: "jane@acme.com", Action: "LOGIN", Token: first.Body.Token})
+	if poll.Body.Touchque.State != StepPasskeyRequired || poll.Body.Touchque.ExpiresAt != isoFromMs(rx) {
+		t.Fatalf("poll: %+v", poll.Body.Touchque)
+	}
+}
+
+func TestContract_TheOfflineQRKeepsTheRequestExpiryAndASwitchToAPasskeyAnswersTheLiveOne(t *testing.T) {
+	api := startFakeAPI(t)
+	api.link("jane@acme.com")
+	c := api.client(t)
+	first := runGuard(c, GuardInput{User: "jane@acme.com", Action: "LOGIN"})
+	rx, _ := isoMs(first.Body.Touchque.ExpiresAt)
+	off := runGuard(c, GuardInput{User: "jane@acme.com", Action: "LOGIN", Token: first.Body.Token, Offline: true})
+	if off.Body.Touchque.State != StepOffline || off.Body.Touchque.ExpiresAt != "" || VerifyGuardToken("test_secret", off.Body.Token).Rx != rx {
+		t.Fatalf("offline: %+v", off.Body.Touchque)
+	}
+	kept := runGuard(c, GuardInput{User: "jane@acme.com", Action: "LOGIN", Token: off.Body.Token})
+	if kept.Body.Touchque.State != StepOffline || VerifyGuardToken("test_secret", kept.Body.Token).Rx != rx {
+		t.Fatalf("kept: %+v", kept.Body.Touchque)
+	}
+	api.escalate("")
+	passkey := runGuard(c, GuardInput{User: "jane@acme.com", Action: "LOGIN", Token: kept.Body.Token})
+	live, ok := isoMs(passkey.Body.Touchque.ExpiresAt)
+	if passkey.Body.Touchque.State != StepPasskeyRequired || passkey.Body.Touchque.RequestID != first.Body.Touchque.RequestID ||
+		!ok || live-rx < 100000 {
+		t.Fatalf("passkey: %+v", passkey.Body.Touchque)
+	}
+}
+
+func TestContract_CheckKeepsTheLiveExpiry(t *testing.T) {
+	api := startFakeAPI(t)
+	api.link("jane@acme.com")
+	c := api.client(t)
+	step, err := c.Start("LOGIN", "jane@acme.com", StartOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now, err := c.Check(step.RequestID)
+	if err != nil || now.ExpiresAt != step.ExpiresAt {
+		t.Fatalf("check: %+v %v (start %q)", now, err, step.ExpiresAt)
+	}
+}
+
+func TestContract_NoEnrollAnswersEnrollmentOff(t *testing.T) {
+	api := startFakeAPI(t)
+	c := api.client(t)
+	in := GuardInput{User: "new-off@acme.com", Action: "LOGIN", NoEnroll: true}
+	first := runGuard(c, in)
+	want := Step{State: StepEnroll, Reason: "enrollment_off"}
+	if first.Status != 202 || !reflect.DeepEqual(first.Body.Touchque, want) {
+		t.Fatalf("first: status=%d step=%+v", first.Status, first.Body.Touchque)
+	}
+	in.Token = first.Body.Token
+	if poll := runGuard(c, in); poll.Status != 202 || !reflect.DeepEqual(poll.Body.Touchque, want) {
+		t.Fatalf("poll: status=%d step=%+v", poll.Status, poll.Body.Touchque)
+	}
+	for _, path := range callPaths(api.calls()) {
+		if path == "/auth/generate-secret" || path == "/auth/secret/reset" {
+			t.Fatalf("no first-time QR may be issued: %s", path)
+		}
 	}
 }

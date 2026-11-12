@@ -59,9 +59,10 @@ type Step struct {
 type EnrollStep struct {
 	QRCodeDataURL string   `json:"qrCodeDataUrl,omitempty"`
 	RecoveryCodes []string `json:"recoveryCodes,omitempty"`
-	// ExpiresAt is when the QR stops working (ISO 8601). Until then the
-	// guard's polls answer {state: "enroll", expiresAt} without Enroll: keep
-	// showing this QR.
+	// ExpiresAt is when the QR stops working (ISO 8601). Until about 15 s
+	// before it, the guard's polls answer {state: "enroll", expiresAt} without
+	// Enroll: keep showing this QR. Then a poll brings a new QR with new
+	// recovery codes, and the old QR and the old codes stop working.
 	ExpiresAt string `json:"expiresAt,omitempty"`
 }
 
@@ -105,8 +106,9 @@ type StartOptions struct {
 	// IP / UserAgent: the end user's — shown on the phone.
 	IP        string
 	UserAgent string
-	// NoEnroll: set true to get StepEnroll{} (no QR) instead of issuing one,
-	// when the user has no linked phone.
+	// NoEnroll: set true to get Step{State: StepEnroll, Reason:
+	// "enrollment_off"} (no QR) instead of issuing one, when the user has no
+	// linked phone.
 	NoEnroll bool
 	// BrowserProof (silent sign-ins): the browser's device-bound key proof
 	// (X-Touchque-Browser), passed through untouched. Once the user approves,
@@ -176,7 +178,8 @@ func (c *Client) Start(action, user string, opts StartOptions) (*Step, error) {
 	switch {
 	case apiErr.StatusCode == 404 && (apiErr.Code == "device_not_linked" || strings.Contains(strings.ToLower(apiErr.Message), "linked device")):
 		if opts.NoEnroll {
-			return &Step{State: StepEnroll}, nil
+			// No phone, and this guard may not show a QR: say so, so the page stops polling.
+			return &Step{State: StepEnroll, Reason: "enrollment_off"}, nil
 		}
 		return enrollStep(c, user)
 	case apiErr.StatusCode == 423:
@@ -272,7 +275,9 @@ var stepStateMap = map[string]StepState{
 	"PENDING": StepWaiting, "CONFIRMED": StepApproved, "REJECTED": StepRejected, "EXPIRED": StepExpired,
 }
 
-// Check reports where a started approval is now.
+// Check reports where a started approval is now, with the request's live
+// ExpiresAt when the API gives it (a Vishing Shield escalation to a passkey
+// extends it).
 func (c *Client) Check(requestID string) (*Step, error) {
 	s, err := c.Login.Status(requestID)
 	if err != nil {
@@ -285,7 +290,7 @@ func (c *Client) Check(requestID string) (*Step, error) {
 	if s.Status == "PENDING" && s.RequiresPasskey {
 		state = StepPasskeyRequired
 	}
-	step := &Step{State: state, RequestID: requestID}
+	step := &Step{State: state, RequestID: requestID, ExpiresAt: s.ExpiresAt}
 	if state == StepApproved && s.Assurance != nil {
 		step.Assurance = s.Assurance
 	}
@@ -338,6 +343,7 @@ type GuardTokenClaims struct {
 	Oc  string `json:"oc,omitempty"`  // offline challenge id
 	Cc  string `json:"cc,omitempty"`  // "Why?" case code, shown while waiting
 	Ee  int64  `json:"ee,omitempty"`  // the first-time QR's expiry, ms since the epoch (enroll steps)
+	Rx  int64  `json:"rx,omitempty"`  // the request's expiry, ms since the epoch (waiting / passkey_required steps)
 	Exp int64  `json:"exp"`           // expiry, ms since the epoch
 }
 
