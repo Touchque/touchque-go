@@ -73,6 +73,9 @@ func (a *AuthResource) ResetSecret(externalUsername string) (*ResetSecretRespons
 	if expAt, ok := res["expiresAt"].(string); ok {
 		resp.ExpiresAt = expAt
 	}
+	if ttlMs, ok := res["ttlMs"].(float64); ok {
+		resp.TTLMs = int(ttlMs)
+	}
 	if qr, ok := res["qrCodeDataUrl"].(string); ok {
 		resp.QRCodeDataURL = qr
 	}

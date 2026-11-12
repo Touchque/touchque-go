@@ -402,8 +402,18 @@ func (h *relayHandler) allow(w http.ResponseWriter, r *http.Request, route, user
 
 // allowN is allow with the per-IP budget multiplied by ipFactor.
 func (h *relayHandler) allowN(w http.ResponseWriter, r *http.Request, route, user string, ipFactor int) bool {
+	if wait := h.charge(r, route, user, ipFactor); wait > 0 {
+		writeRateLimited(w, wait)
+		return false
+	}
+	return true
+}
+
+// charge counts one request against route's limits and returns how many
+// seconds to wait when this IP or this user is over them (0: allowed).
+func (h *relayHandler) charge(r *http.Request, route, user string, ipFactor int) int {
 	if h.limiter == nil {
-		return true
+		return 0
 	}
 	ip := h.ipOf(r)
 	if ip == "" {
@@ -415,14 +425,15 @@ func (h *relayHandler) allowN(w http.ResponseWriter, r *http.Request, route, use
 			wait = uw
 		}
 	}
-	if wait == 0 {
-		return true
-	}
+	return wait
+}
+
+// writeRateLimited answers the relay's 429.
+func writeRateLimited(w http.ResponseWriter, wait int) {
 	w.Header().Set("Retry-After", strconv.Itoa(wait))
 	writeRelayJSON(w, http.StatusTooManyRequests, map[string]interface{}{
 		"error": "RATE_LIMITED", "message": "Too many attempts. Try again later.", "retryAfter": wait,
 	})
-	return false
 }
 
 // loginUser is who a pre-auth route acts for: the first-factor user when
@@ -543,19 +554,33 @@ func (h *relayHandler) login(w http.ResponseWriter, r *http.Request, body relayB
 	}, r.Header.Get, h.opts.SilentSignIn, h.opts.SilentSignInMaxAgeSeconds)
 	// Polling an approval already sent is not a new attempt: it has its own,
 	// larger per-IP budget and never uses the user's push budget.
-	if isStatusPoll(h.client, in) {
+	poll := isStatusPoll(h.client, in)
+	if poll {
 		if !h.allowN(w, r, "login-poll", "", pollsPerAttempt) {
 			return
 		}
 	} else if !h.allow(w, r, "login", user) {
 		return
 	}
-	result := runGuardContext(r.Context(), h.client, in)
-	if result.Approved == nil {
-		if result.Body.Touchque.RetryAfter > 0 {
-			w.Header().Set("Retry-After", strconv.Itoa(result.Body.Touchque.RetryAfter))
+	// A first-time-QR poll that starts after all (a push once linked, a new QR) pays like a fresh
+	// attempt, so a replayed token cannot start pushes or new secrets on the poll budget.
+	refusedWait := 0
+	in.BeforeStart = func() *GuardResult {
+		if !poll {
+			return nil // already charged above
 		}
-		w.Header().Set("Cache-Control", "no-store")
+		if refusedWait = h.charge(r, "login", user, 1); refusedWait == 0 {
+			return nil
+		}
+		return &GuardResult{Status: http.StatusTooManyRequests, Body: &GuardBody{Touchque: Step{State: StepRateLimited, RetryAfter: refusedWait}}}
+	}
+	result := runGuardContext(r.Context(), h.client, in)
+	if refusedWait > 0 {
+		writeRateLimited(w, refusedWait) // the usual 429
+		return
+	}
+	if result.Approved == nil {
+		setGuardHeaders(w.Header(), result)
 		writeRelayJSON(w, result.Status, result.Body)
 		return
 	}
@@ -799,10 +824,7 @@ func (h *relayHandler) passkeyRegisterOptions(w http.ResponseWriter, r *http.Req
 	}
 	result := runGuard(h.client, in)
 	if result.Approved == nil {
-		if result.Body.Touchque.RetryAfter > 0 {
-			w.Header().Set("Retry-After", strconv.Itoa(result.Body.Touchque.RetryAfter))
-		}
-		w.Header().Set("Cache-Control", "no-store")
+		setGuardHeaders(w.Header(), result)
 		writeRelayJSON(w, result.Status, result.Body)
 		return
 	}

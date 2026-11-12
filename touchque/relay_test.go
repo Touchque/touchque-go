@@ -832,3 +832,95 @@ func TestRelay_AddingAPasskeyNeedsThePhone(t *testing.T) {
 		t.Fatal("one approval must unlock one registration")
 	}
 }
+
+// ── first-time QR tokens: starts pay like fresh attempts (5.1) ───────────
+
+func enrollRelay(t *testing.T, api *fakeAPI, perUser int) http.Handler {
+	return mountRelay(api.client(t), RelayOptions{
+		LoginUser: func(*http.Request) string { return "new@example.com" },
+		RateLimit: &RateLimitOptions{PerUser: perUser, PerIP: 100},
+	})
+}
+
+func TestRelay_EnrollTokenReplaysAfterLinkingPayFromThePerUserBudget(t *testing.T) {
+	api := startFakeAPI(t)
+	h := enrollRelay(t, api, 3)
+	rec, out := relayCall(t, h, "POST", "/login", map[string]interface{}{}) // 1 of 3
+	token, _ := out["token"].(string)
+	if rec.Code != 202 || token == "" {
+		t.Fatalf("first: %d %s", rec.Code, rec.Body.String())
+	}
+	api.link("new@example.com")
+	before := len(callsTo(api, "/login/request"))
+	var statuses []int
+	for i := 0; i < 30; i++ {
+		rec, out := relayCall(t, h, "POST", "/login", map[string]interface{}{}, withHeader(GuardTokenHeader, token))
+		statuses = append(statuses, rec.Code)
+		if rec.Code == 429 && (out["error"] != "RATE_LIMITED" || rec.Header().Get("Retry-After") == "") {
+			t.Fatalf("the usual 429: %q %v", rec.Header().Get("Retry-After"), out)
+		}
+	}
+	if fmt.Sprint(statuses[:3]) != "[202 202 429]" || strings.Count(fmt.Sprint(statuses), "429") != 28 {
+		t.Fatalf("statuses %v", statuses) // 2 and 3 of 3 were pushes; not 30 pushes on the poll budget
+	}
+	if n := len(callsTo(api, "/login/request")) - before; n != 2 {
+		t.Fatalf("pushes after linking: %d", n)
+	}
+}
+
+func TestRelay_PollsThatKeepTheFirstTimeQRAreNeverCharged(t *testing.T) {
+	api := startFakeAPI(t)
+	h := enrollRelay(t, api, 2)
+	_, out := relayCall(t, h, "POST", "/login", map[string]interface{}{}) // 1 of 2
+	token, _ := out["token"].(string)
+	for i := 0; i < 30; i++ {
+		rec, out := relayCall(t, h, "POST", "/login", map[string]interface{}{}, withHeader(GuardTokenHeader, token))
+		step, _ := out["touchque"].(map[string]interface{})
+		if rec.Code != 202 || step["state"] != "enroll" || step["enroll"] != nil {
+			t.Fatalf("keep %d: %d %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	api.link("new@example.com")
+	rec, out := relayCall(t, h, "POST", "/login", map[string]interface{}{}, withHeader(GuardTokenHeader, token)) // 2 of 2
+	if step, _ := out["touchque"].(map[string]interface{}); rec.Code != 202 || step["state"] != "waiting" {
+		t.Fatalf("linked: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec, _ := relayCall(t, h, "POST", "/login", map[string]interface{}{}, withHeader(GuardTokenHeader, token)); rec.Code != 429 {
+		t.Fatalf("the budget is spent: %d", rec.Code)
+	}
+}
+
+func TestRelay_AFirstTimeQRRenewalAtTheMarginIsCharged(t *testing.T) {
+	api := startFakeAPI(t)
+	api.opts(map[string]interface{}{"secretTtlMs": 1000}) // within 15 s of its expiry at once
+	h := enrollRelay(t, api, 1)
+	_, out := relayCall(t, h, "POST", "/login", map[string]interface{}{}) // 1 of 1
+	token, _ := out["token"].(string)
+	rec, out := relayCall(t, h, "POST", "/login", map[string]interface{}{}, withHeader(GuardTokenHeader, token))
+	if rec.Code != 429 || out["error"] != "RATE_LIMITED" {
+		t.Fatalf("renewal: %d %s", rec.Code, rec.Body.String())
+	}
+	if n := len(callsTo(api, "/auth/secret/reset")); n != 0 {
+		t.Fatalf("no new secret on a spent budget: %d resets", n)
+	}
+}
+
+func TestRelay_RefusalsCarryTheTouchqueStateHeaders(t *testing.T) {
+	api := startFakeAPI(t)
+	api.link("jane@example.com")
+	h := mountRelay(api.client(t), RelayOptions{
+		LoginUser: func(*http.Request) string { return "jane@example.com" },
+		RateLimit: &RateLimitOptions{Disabled: true},
+	})
+	rec, out := relayCall(t, h, "POST", "/login", map[string]interface{}{})
+	token, _ := out["token"].(string)
+	if rec.Code != 202 || rec.Header().Get("X-Touchque-State") != "" {
+		t.Fatalf("a 202 step has no refusal headers: %d %v", rec.Code, rec.Header())
+	}
+	api.reject("")
+	rec, _ = relayCall(t, h, "POST", "/login", map[string]interface{}{}, withHeader(GuardTokenHeader, token))
+	if rec.Code != 403 || rec.Header().Get("X-Touchque-State") != "rejected" || rec.Header().Get("X-Touchque-Reason") != "" ||
+		rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("refusal: %d %v", rec.Code, rec.Header())
+	}
+}

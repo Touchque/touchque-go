@@ -7,7 +7,21 @@ Go modules are versioned via git tags (e.g. `touchque-go/v1.1.0`), not a
 manifest field — the version below corresponds to the tag this SDK should
 be released under next.
 
-## [Unreleased]
+## [5.1.0] — 2026-11-12
+
+### Fixed
+- **`Require(nil, ...)` builds the client from the environment instead of failing.** A nil client panicked (nil pointer) on every request with a signed-in user. `Require` now builds it with `New()` (`TQ_API_KEY` / `TQ_API_SECRET` / `TQ_API_URL`) on the first request and keeps it once built. While it cannot be built, the route answers 500 `{"touchque": {"state": "blocked", "reason": "misconfigured"}, "error": {"code": "misconfigured", ...}}` with `Cache-Control: no-store` (401 `unauthenticated` when nobody is signed in), `next` never runs, and `[Touchque] TQ_API_KEY and TQ_API_SECRET are not set: routes guarded by Touchque answer 500 misconfigured.` goes to `RequireOptions.Logger` once per process. `Require` without `User` still panics (a wiring bug); `New()` and `NewClient` are unchanged. `RunGuard` with a nil client answers the same 500 instead of panicking.
+- **The first-time QR stays on screen while it works.** Every poll with an `enroll` token started again (login request, 404, generate-secret 409, reset), so each poll replaced the QR and the recovery codes being scanned. The enroll step now carries `Enroll.ExpiresAt` (the API's `expiresAt` when it is ISO 8601, else now + `ttlMs`) and its token the claim `ee` (`GuardTokenClaims.Ee`). A poll with such a token reads the link state (`Auth.GetUser`): linked, it starts as before (`waiting` …); not linked and more than 15 seconds before the expiry, it answers 202 `{"touchque": {"state": "enroll", "expiresAt": ...}, "token": ...}` with no `enroll` and no other call, so the page keeps the QR and codes it shows; an expired QR (or a 404) gets a new one in `enroll.qrCodeDataUrl`. Another error of that check answers 503 `unavailable`. `IsStatusPoll` counts such polls while the QR is up (more than 15 seconds before its expiry), so the relay's per-user limit no longer refuses enrollment polls after a few seconds; the poll that renews an expiring QR, and a replayed old token, still count against it. Starts are always charged: `GuardInput.BeforeStart func() *GuardResult` is called at most once, right before a first-time-QR token starts something (a push once the phone is linked, or a new QR), and a result it returns is answered instead; the relay's `POST /login` charges its per-user `login` limit there, as for a fresh attempt, and answers its usual 429 when it is over (30 replays of an enroll token after linking gave 30 pushes on the poll budget). Pages on `@touchque/web` need 2.1.0.
+- `IsStatusPoll(nil, ...)` answers false instead of panicking.
+- **README code samples compile.** `Require` takes an `http.Handler`, so the examples wrap their handler functions in `http.HandlerFunc(...)`; the three primitives use the real signatures (`tq.Start(action, user, StartOptions{...})`, `tq.Check(requestID)`, `tq.Complete(requestID, user, action, CompleteExpect{...})`); the webhook example passes the body as a string.
+- **go.mod says `go 1.26`**, not `go 1.26.3`, so `go get` no longer raises your project's go directive to a patch release.
+
+### Added
+- **`RequireOptions.ErrorBody func(GuardRefusal) any`: refusals in your app's own error shape.** Called for every answer with status 400 or above (never a 202 step) with a `GuardRefusal` (`Status`, `Code`, `Message`, `Touchque`, a copy of the step). What it returns counts by its JSON encoding: a value that encodes to an object (a map, a struct) is sent with `touchque` set to the step, anything else as it is; status and headers stay; a panic or a value that does not encode sends the default body and logs `[Touchque] ErrorBody failed`.
+- **Refusals carry `X-Touchque-State` (and `X-Touchque-Reason` when the step has a reason)**, from `Require` and from the relay (`POST /login`, passkey registration), so `@touchque/web` 2.1.0 knows the state when an `ErrorBody` sends no `touchque`.
+- `RequireOptions.Logger`: where `Require` logs its own lines (missing keys, a failed `ErrorBody`) and, with a nil client, those of the client it builds.
+- `ResetSecretResponse.TTLMs` (`ttlMs` of `POST /auth/secret/reset`).
+- README: "Guard inside your handler" (`RunGuard` after your own checks, the answers and headers to send, the 202 / enroll poll contract), "Refusals in your own error shape" and "Without API keys".
 
 ## [5.0.0] — 2026-11-11
 

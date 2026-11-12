@@ -3,9 +3,13 @@ package touchque
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
+	"sync"
+	"sync/atomic"
 )
 
 // RequireOptions configures Require.
@@ -39,6 +43,178 @@ type RequireOptions struct {
 	// Context is for your Touchque Actions only (event.context): roles,
 	// plan, amount… Never shown on the phone.
 	Context func(*http.Request) map[string]interface{}
+	// ErrorBody: your app's own error shape for the refusals Require sends
+	// (401, 403, 408, 423, 429, 500, 503), e.g.
+	//
+	//	ErrorBody: func(r touchque.GuardRefusal) any {
+	//	    return map[string]string{"message": r.Message, "code": r.Code}
+	//	}
+	//
+	// A value that encodes to a JSON object is sent with "touchque" set to
+	// the step (so @touchque/web still sees the state; no token is added),
+	// anything else (a string, a number, a slice, nil) as it is. Status and
+	// headers stay, and every refusal carries X-Touchque-State (and
+	// X-Touchque-Reason). A panic, or a value that does not encode, sends the
+	// default body and is logged. Never called for a 202 step or an approval.
+	ErrorBody func(GuardRefusal) any
+	// Logger receives Require's own lines (TQ_API_KEY / TQ_API_SECRET not set,
+	// once per process; an ErrorBody that failed) and, with a nil client, the
+	// lines of the client Require builds. nil: the client's Config.Logger;
+	// with a nil client, nothing is logged.
+	Logger *slog.Logger
+}
+
+// GuardRefusal is what RequireOptions.ErrorBody gets for an answer with
+// status 400 or above.
+type GuardRefusal struct {
+	// Status is what Require sends: 401, 403, 408, 423, 429, 500 or 503.
+	Status int `json:"status"`
+	// Code is the guard's error code when it set one (unauthenticated,
+	// misconfigured, unavailable), else the step's Reason, else its State.
+	Code string `json:"code"`
+	// Message is the guard's error message when it set one, else "The
+	// approval was rejected.", "The approval expired. Try again.", "Too many
+	// rejected approvals. Try again later.", "Too many attempts. Try again
+	// later." or "The approval was refused.", by state.
+	Message string `json:"message"`
+	// Touchque is a copy of the step as it would be sent.
+	Touchque Step `json:"touchque"`
+}
+
+var refusalMessages = map[StepState]string{
+	StepRejected:    "The approval was rejected.",
+	StepExpired:     "The approval expired. Try again.",
+	StepFrozen:      "Too many rejected approvals. Try again later.",
+	StepRateLimited: "Too many attempts. Try again later.",
+}
+
+// copyStep is a deep copy of s (its slices and pointers too), for code that
+// must not change the step that is sent.
+func copyStep(s Step) Step {
+	raw, err := json.Marshal(s)
+	if err != nil {
+		return s
+	}
+	var out Step
+	if json.Unmarshal(raw, &out) != nil {
+		return s
+	}
+	return out
+}
+
+// setGuardHeaders sets the headers of a result that is not an approval:
+// Cache-Control: no-store, Retry-After when the step has RetryAfter (423,
+// 429), and on a refusal (status >= 400) X-Touchque-State and
+// X-Touchque-Reason (when the step has a reason). @touchque/web builds the
+// step from them when the body has no "touchque" (an ErrorBody that is not
+// an object).
+func setGuardHeaders(h http.Header, result GuardResult) {
+	h.Set("Content-Type", "application/json")
+	h.Set("Cache-Control", "no-store")
+	if result.Body == nil {
+		return
+	}
+	step := result.Body.Touchque
+	if step.RetryAfter > 0 {
+		h.Set("Retry-After", strconv.Itoa(step.RetryAfter))
+	}
+	if result.Status >= 400 {
+		if step.State != "" {
+			h.Set("X-Touchque-State", string(step.State))
+		}
+		if step.Reason != "" {
+			h.Set("X-Touchque-Reason", step.Reason)
+		}
+	}
+}
+
+func guardRefusal(result GuardResult) GuardRefusal {
+	step := result.Body.Touchque
+	ref := GuardRefusal{Status: result.Status, Touchque: copyStep(step)}
+	if result.Body.Error != nil {
+		ref.Code, ref.Message = result.Body.Error.Code, result.Body.Error.Message
+	}
+	if ref.Code == "" {
+		ref.Code = step.Reason
+	}
+	if ref.Code == "" {
+		ref.Code = string(step.State)
+	}
+	if ref.Message == "" {
+		ref.Message = refusalMessages[step.State]
+	}
+	if ref.Message == "" {
+		ref.Message = "The approval was refused."
+	}
+	return ref
+}
+
+// responseBody is what Require sends for a result that is not an approval:
+// result.Body, or for a refusal what errorBody makes of it.
+func responseBody(result GuardResult, errorBody func(GuardRefusal) any, logger *slog.Logger) (body any) {
+	if errorBody == nil || result.Status < 400 {
+		return result.Body
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			sdkLog(logger, slog.LevelError, "[Touchque] ErrorBody failed", "error", errorText(r))
+			body = result.Body
+		}
+	}()
+	custom, err := json.Marshal(errorBody(guardRefusal(result)))
+	if err != nil {
+		sdkLog(logger, slog.LevelError, "[Touchque] ErrorBody failed", "error", errorText(err))
+		return result.Body
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(custom, &fields) != nil || fields == nil {
+		return json.RawMessage(custom) // not an object: sent as it is
+	}
+	step, err := json.Marshal(result.Body.Touchque)
+	if err != nil {
+		return result.Body
+	}
+	fields["touchque"] = step
+	return fields
+}
+
+// envClient is the client Require(nil, …) builds from TQ_API_KEY /
+// TQ_API_SECRET / TQ_API_URL on first use and keeps once built; until then
+// every request tries again.
+type envClient struct {
+	mu     sync.Mutex
+	client atomic.Pointer[Client]
+	logger *slog.Logger
+}
+
+// warnedUnconfigured: the missing keys are logged once per process.
+var warnedUnconfigured atomic.Bool
+
+func (e *envClient) get() *Client {
+	if c := e.client.Load(); c != nil {
+		return c
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if c := e.client.Load(); c != nil {
+		return c
+	}
+	c, err := New()
+	if err != nil {
+		if e.logger != nil && warnedUnconfigured.CompareAndSwap(false, true) {
+			if os.Getenv("TQ_API_KEY") == "" || os.Getenv("TQ_API_SECRET") == "" {
+				sdkLog(e.logger, slog.LevelError, "[Touchque] TQ_API_KEY and TQ_API_SECRET are not set: routes guarded by Touchque answer 500 misconfigured.")
+			} else {
+				sdkLog(e.logger, slog.LevelError, "[Touchque] misconfigured", "error", errorText(err))
+			}
+		}
+		return nil
+	}
+	if e.logger != nil {
+		c.logger = e.logger
+	}
+	e.client.Store(c)
+	return c
 }
 
 type approvalContextKey struct{}
@@ -91,6 +267,11 @@ func guardInputFromRequest(r *http.Request) (token, offline, code, codeType stri
 // design and sends the same request again with header
 // "X-Touchque-Token: <token>". Once approved, next runs exactly once, with
 // the approval available via ApprovalFromContext(r.Context()).
+//
+// A nil client is built from TQ_API_KEY / TQ_API_SECRET on the first request
+// (New) and kept once built. While it cannot be built, Require answers 500
+// misconfigured (401 when nobody is signed in) and next never runs; it never
+// panics for it. Require panics only without RequireOptions.User.
 func Require(client *Client, action string, next http.Handler, opts RequireOptions) http.Handler {
 	userOf := opts.User
 	if userOf == nil {
@@ -101,6 +282,10 @@ func Require(client *Client, action string, next http.Handler, opts RequireOptio
 	ipOf := opts.IP
 	if ipOf == nil {
 		ipOf = defaultIP
+	}
+	var env *envClient
+	if client == nil {
+		env = &envClient{logger: opts.Logger}
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -122,7 +307,11 @@ func Require(client *Client, action string, next http.Handler, opts RequireOptio
 		if opts.Context != nil {
 			in.Context = opts.Context(r)
 		}
-		result := runGuardContext(r.Context(), client, in)
+		c := client
+		if env != nil {
+			c = env.get() // nil while TQ_API_KEY / TQ_API_SECRET are not set: 500 misconfigured
+		}
+		result := runGuardContext(r.Context(), c, in)
 
 		if result.Approved != nil {
 			ctx := context.WithValue(r.Context(), approvalContextKey{}, result.Approved)
@@ -130,12 +319,13 @@ func Require(client *Client, action string, next http.Handler, opts RequireOptio
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-store")
-		if result.Body.Touchque.RetryAfter > 0 {
-			w.Header().Set("Retry-After", strconv.Itoa(result.Body.Touchque.RetryAfter))
+		logger := opts.Logger
+		if logger == nil && c != nil {
+			logger = c.logger
 		}
+		body := responseBody(result, opts.ErrorBody, logger)
+		setGuardHeaders(w.Header(), result)
 		w.WriteHeader(result.Status)
-		_ = json.NewEncoder(w).Encode(result.Body)
+		_ = json.NewEncoder(w).Encode(body)
 	})
 }

@@ -59,7 +59,10 @@ type Step struct {
 type EnrollStep struct {
 	QRCodeDataURL string   `json:"qrCodeDataUrl,omitempty"`
 	RecoveryCodes []string `json:"recoveryCodes,omitempty"`
-	ExpiresAt     string   `json:"expiresAt,omitempty"`
+	// ExpiresAt is when the QR stops working (ISO 8601). Until then the
+	// guard's polls answer {state: "enroll", expiresAt} without Enroll: keep
+	// showing this QR.
+	ExpiresAt string `json:"expiresAt,omitempty"`
 }
 
 // OfflineStep is shown while the user types the code from an offline challenge.
@@ -216,7 +219,7 @@ func dataError(err *APIError) string {
 func enrollStep(c *Client, user string) (*Step, error) {
 	gen, err := c.Auth.GenerateSecret(user)
 	if err == nil {
-		return &Step{State: StepEnroll, Enroll: &EnrollStep{QRCodeDataURL: gen.QRCodeDataURL, RecoveryCodes: gen.RecoveryCodes, ExpiresAt: gen.ExpiresAt}}, nil
+		return enrollQR(gen.QRCodeDataURL, gen.RecoveryCodes, gen.ExpiresAt, gen.TTLMs), nil
 	}
 	apiErr, ok := err.(*APIError)
 	if !ok || apiErr.StatusCode != 409 {
@@ -230,7 +233,39 @@ func enrollStep(c *Client, user string) (*Step, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Step{State: StepEnroll, Enroll: &EnrollStep{QRCodeDataURL: reset.QRCodeDataURL, RecoveryCodes: reset.RecoveryCodes, ExpiresAt: reset.ExpiresAt}}, nil
+	return enrollQR(reset.QRCodeDataURL, reset.RecoveryCodes, reset.ExpiresAt, reset.TTLMs), nil
+}
+
+// enrollQR is the first-time QR step. Its ExpiresAt is the API's expiresAt
+// when it is ISO 8601, else now + ttlMs when positive, else empty; the guard
+// binds it to its token (claim Ee), so polls keep this QR instead of making
+// a new one.
+func enrollQR(qr string, recoveryCodes []string, expiresAt string, ttlMs int) *Step {
+	if _, ok := isoMs(expiresAt); !ok {
+		expiresAt = ""
+		if ttlMs > 0 {
+			expiresAt = isoFromMs(nowMs() + int64(ttlMs))
+		}
+	}
+	return &Step{State: StepEnroll, Enroll: &EnrollStep{QRCodeDataURL: qr, RecoveryCodes: recoveryCodes, ExpiresAt: expiresAt}}
+}
+
+// isoMs reads an ISO 8601 date-time (no zone means UTC) as ms since the epoch.
+func isoMs(s string) (int64, bool) {
+	if s == "" {
+		return 0, false
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.UnixMilli(), true
+		}
+	}
+	return 0, false
+}
+
+// isoFromMs writes ms since the epoch as ISO 8601 in UTC, like JavaScript's toISOString().
+func isoFromMs(ms int64) string {
+	return time.UnixMilli(ms).UTC().Format("2006-01-02T15:04:05.000Z")
 }
 
 var stepStateMap = map[string]StepState{
@@ -302,6 +337,7 @@ type GuardTokenClaims struct {
 	N   string `json:"n,omitempty"`   // matching number
 	Oc  string `json:"oc,omitempty"`  // offline challenge id
 	Cc  string `json:"cc,omitempty"`  // "Why?" case code, shown while waiting
+	Ee  int64  `json:"ee,omitempty"`  // the first-time QR's expiry, ms since the epoch (enroll steps)
 	Exp int64  `json:"exp"`           // expiry, ms since the epoch
 }
 

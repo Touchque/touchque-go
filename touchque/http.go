@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-const sdkVersion = "5.0.0"
+const sdkVersion = "5.1.0"
 
 type httpClient struct {
 	config *Config

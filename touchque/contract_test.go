@@ -7,6 +7,7 @@ package touchque
 import (
 	"bytes"
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -289,5 +290,178 @@ func TestContract_GuardLogsOnlyThroughConfigLogger(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "[Touchque] misconfigured") || !strings.Contains(buf.String(), "NOT_DEFINED") {
 		t.Fatalf("expected the misconfiguration in the logger, got %q", buf.String())
+	}
+}
+
+// ── first-time QR: one QR per enrollment, not one per poll ──────────────
+
+func callPaths(calls []map[string]interface{}) []string {
+	paths := make([]string, 0, len(calls))
+	for _, call := range calls {
+		path, _ := call["path"].(string)
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+func TestContract_EnrollPollsKeepTheQRUntilThePhoneIsLinked(t *testing.T) {
+	api := startFakeAPI(t)
+	c := api.client(t)
+	const user = "new-qr@acme.com"
+	in := GuardInput{User: user, Action: "LOGIN", Details: []LoginDetail{{Label: "Device", Value: "Mac"}}}
+
+	first := runGuard(c, in)
+	qr := first.Body.Touchque.Enroll
+	if first.Status != 202 || qr == nil || qr.QRCodeDataURL != "data:image/png;base64,QR-"+user || !reflect.DeepEqual(qr.RecoveryCodes, []string{"r1"}) {
+		t.Fatalf("first: status=%d body=%+v", first.Status, first.Body)
+	}
+	ee, ok := isoMs(qr.ExpiresAt)
+	if left := ee - nowMs(); !ok || left <= 290000 || left > 300000 { // the API's own expiresAt (5 minutes)
+		t.Fatalf("expiresAt = %q", qr.ExpiresAt)
+	}
+	if claims := VerifyGuardToken("test_secret", first.Body.Token); claims == nil || claims.St != string(StepEnroll) || claims.Ee != ee {
+		t.Fatalf("claims = %+v", claims)
+	}
+
+	before := len(api.calls())
+	in.Token = first.Body.Token
+	poll := runGuard(c, in)
+	want := Step{State: StepEnroll, ExpiresAt: qr.ExpiresAt, Details: in.Details}
+	if poll.Status != 202 || !reflect.DeepEqual(poll.Body.Touchque, want) {
+		t.Fatalf("poll: status=%d step=%+v", poll.Status, poll.Body.Touchque)
+	}
+	if paths := callPaths(api.calls()[before:]); !reflect.DeepEqual(paths, []string{"/users/" + user}) {
+		t.Fatalf("a poll only reads the link state, got %v", paths) // no generate-secret, no reset
+	}
+	if claims := VerifyGuardToken("test_secret", poll.Body.Token); claims == nil || claims.St != string(StepEnroll) || claims.Ee != ee {
+		t.Fatalf("poll claims = %+v", claims)
+	}
+
+	api.link(user) // the phone scanned the QR
+	in.Token = poll.Body.Token
+	if waiting := runGuard(c, in); waiting.Status != 202 || waiting.Body.Touchque.State != StepWaiting {
+		t.Fatalf("linked: status=%d body=%+v", waiting.Status, waiting.Body)
+	}
+}
+
+func TestContract_AnEnrollQRAboutToExpireIsReplaced(t *testing.T) {
+	api := startFakeAPI(t)
+	api.opts(map[string]interface{}{"secretTtlMs": 1000})
+	c := api.client(t)
+	const user = "late@acme.com"
+	first := runGuard(c, GuardInput{User: user, Action: "LOGIN"})
+	if first.Body.Touchque.Enroll == nil || first.Body.Touchque.Enroll.QRCodeDataURL != "data:image/png;base64,QR-"+user {
+		t.Fatalf("first: %+v", first.Body)
+	}
+	poll := runGuard(c, GuardInput{User: user, Action: "LOGIN", Token: first.Body.Token})
+	if poll.Status != 202 || poll.Body.Touchque.Enroll == nil || poll.Body.Touchque.Enroll.QRCodeDataURL != "data:image/png;base64,QR2-"+user {
+		t.Fatalf("within 15 s of its expiry: status=%d body=%+v", poll.Status, poll.Body)
+	}
+}
+
+func TestContract_AnEnrollQRThatIsGoneIsReplaced(t *testing.T) {
+	api := startFakeAPI(t)
+	c := api.client(t)
+	const user = "gone@acme.com"
+	first := runGuard(c, GuardInput{User: user, Action: "LOGIN"}) // the default 5 minutes: still up
+	if ee := VerifyGuardToken("test_secret", first.Body.Token).Ee; ee-nowMs() < 60000 {
+		t.Fatalf("the QR should be far from its expiry, ee=%d", ee)
+	}
+	api.call("/__test/reset", map[string]interface{}{}) // the QR is gone: GET /users answers 404
+	before := len(api.calls())
+	fresh := runGuard(c, GuardInput{User: user, Action: "LOGIN", Token: first.Body.Token})
+	if fresh.Status != 202 || fresh.Body.Touchque.Enroll == nil || fresh.Body.Touchque.Enroll.QRCodeDataURL != "data:image/png;base64,QR-"+user {
+		t.Fatalf("gone: status=%d body=%+v", fresh.Status, fresh.Body)
+	}
+	if paths := callPaths(api.calls()[before:]); !reflect.DeepEqual(paths, []string{"/users/" + user, "/login/request", "/auth/generate-secret"}) {
+		t.Fatalf("calls = %v", paths)
+	}
+}
+
+func TestContract_BeforeStartRunsOnceOnlyWhenAnEnrollTokenStarts(t *testing.T) {
+	api := startFakeAPI(t)
+	c := api.client(t)
+	calls := 0
+	hook := func() *GuardResult { calls++; return nil }
+	const user = "new-hook@acme.com"
+	in := GuardInput{User: user, Action: "LOGIN", BeforeStart: hook}
+	first := runGuard(c, in) // a fresh attempt: never
+	in.Token = first.Body.Token
+	if keep := runGuard(c, in); keep.Body.Touchque.State != StepEnroll || keep.Body.Touchque.Enroll != nil || calls != 0 {
+		t.Fatalf("keeping the QR runs no hook: %+v calls=%d", keep.Body, calls)
+	}
+
+	api.link(user)
+	before := len(api.calls())
+	refused := in
+	refused.BeforeStart = func() *GuardResult {
+		return &GuardResult{Status: 429, Body: &GuardBody{Touchque: Step{State: StepRateLimited, RetryAfter: 60}}}
+	}
+	if res := runGuard(c, refused); res.Status != 429 || res.Body.Touchque.RetryAfter != 60 {
+		t.Fatalf("the hook's answer: status=%d body=%+v", res.Status, res.Body)
+	}
+	if paths := callPaths(api.calls()[before:]); !reflect.DeepEqual(paths, []string{"/users/" + user}) {
+		t.Fatalf("nothing may start after the hook answered: %v", paths)
+	}
+	if went := runGuard(c, in); went.Body.Touchque.State != StepWaiting || calls != 1 {
+		t.Fatalf("linked: %+v calls=%d", went.Body, calls)
+	}
+
+	api.opts(map[string]interface{}{"secretTtlMs": 1000}) // within 15 s of its expiry: the hook runs before the new QR
+	late := runGuard(c, GuardInput{User: "late-hook@acme.com", Action: "LOGIN"})
+	if renewed := runGuard(c, GuardInput{User: "late-hook@acme.com", Action: "LOGIN", Token: late.Body.Token, BeforeStart: hook}); renewed.Body.Touchque.Enroll == nil || calls != 2 {
+		t.Fatalf("renewed: %+v calls=%d", renewed.Body, calls)
+	}
+
+	api.call("/__test/reset", map[string]interface{}{})
+	fresh := runGuard(c, GuardInput{User: "gone-hook@acme.com", Action: "LOGIN"})
+	api.call("/__test/reset", map[string]interface{}{}) // the QR is gone (404): the hook runs before the new QR
+	if gone := runGuard(c, GuardInput{User: "gone-hook@acme.com", Action: "LOGIN", Token: fresh.Body.Token, BeforeStart: hook}); gone.Body.Touchque.Enroll == nil || calls != 3 {
+		t.Fatalf("gone: %+v calls=%d", gone.Body, calls)
+	}
+}
+
+func TestContract_EnrollLinkCheckErrorIsUnavailable(t *testing.T) {
+	api := startFakeAPI(t)
+	c := api.client(t)
+	first := runGuard(c, GuardInput{User: "down@acme.com", Action: "LOGIN"})
+	api.opts(map[string]interface{}{"featureRefused": "feature_off"}) // every signed call answers 403
+	down := runGuard(c, GuardInput{User: "down@acme.com", Action: "LOGIN", Token: first.Body.Token})
+	if down.Status != 503 || down.Body.Touchque.Reason != "unavailable" {
+		t.Fatalf("status=%d body=%+v", down.Status, down.Body)
+	}
+}
+
+func TestContract_IsStatusPollCountsABoundEnrollToken(t *testing.T) {
+	api := startFakeAPI(t)
+	c := api.client(t)
+	const user = "new-poll@acme.com"
+	token := runGuard(c, GuardInput{User: user, Action: "LOGIN"}).Body.Token
+	if !IsStatusPoll(c, GuardInput{User: user, Action: "LOGIN", Token: token}) {
+		t.Fatal("a bound enroll token with its QR's expiry is a status poll")
+	}
+	for name, in := range map[string]GuardInput{
+		"another user":   {User: "other@acme.com", Action: "LOGIN", Token: token},
+		"another action": {User: user, Action: "SEND_MONEY", Token: token},
+		"offline":        {User: user, Action: "LOGIN", Token: token, Offline: true},
+	} {
+		if IsStatusPoll(c, in) {
+			t.Errorf("%s: counted as a status poll", name)
+		}
+	}
+
+	// The poll that renews an expiring QR (or replays an old token) still counts against the limit.
+	api.opts(map[string]interface{}{"secretTtlMs": 1000})
+	expiring := runGuard(c, GuardInput{User: "late-poll@acme.com", Action: "LOGIN"}).Body.Token
+	if claims := VerifyGuardToken("test_secret", expiring); claims == nil || claims.Ee == 0 ||
+		IsStatusPoll(c, GuardInput{User: "late-poll@acme.com", Action: "LOGIN", Token: expiring}) {
+		t.Fatalf("a QR within 15 s of its expiry is not a status poll: %+v", claims)
+	}
+
+	// No expiry (an enroll step without a QR, or a 5.0 token): every poll starts again, as before.
+	old := runGuard(c, GuardInput{User: user, Action: "LOGIN", NoEnroll: true})
+	if old.Body.Touchque.Enroll != nil || VerifyGuardToken("test_secret", old.Body.Token).Ee != 0 ||
+		IsStatusPoll(c, GuardInput{User: user, Action: "LOGIN", Token: old.Body.Token}) {
+		t.Fatalf("no expiry: %+v", old.Body)
 	}
 }

@@ -121,3 +121,36 @@ func TestRunGuardAndIsStatusPoll(t *testing.T) {
 		t.Fatalf("done: status=%d approved=%+v", done.Status, done.Approved)
 	}
 }
+
+func TestEnrollQRExpiry(t *testing.T) {
+	if s := enrollQR("qr", nil, "2026-11-12T10:05:00.000Z", 1000); s.Enroll.ExpiresAt != "2026-11-12T10:05:00.000Z" {
+		t.Fatalf("the API's own ISO 8601 expiresAt: %q", s.Enroll.ExpiresAt)
+	}
+	before := nowMs()
+	s := enrollQR("qr", []string{"r1"}, "soon", 60000)
+	if ms, ok := isoMs(s.Enroll.ExpiresAt); !ok || ms < before+60000 || ms > nowMs()+60000 || !strings.HasSuffix(s.Enroll.ExpiresAt, "Z") {
+		t.Fatalf("now + ttlMs: %q", s.Enroll.ExpiresAt)
+	}
+	if s := enrollQR("qr", nil, "", 0); s.Enroll.ExpiresAt != "" {
+		t.Fatalf("neither: %q", s.Enroll.ExpiresAt)
+	}
+	if ms, ok := isoMs("2026-11-12T12:05:00+02:00"); !ok || isoFromMs(ms) != "2026-11-12T10:05:00.000Z" {
+		t.Fatalf("offset: %d %v", ms, ok)
+	}
+}
+
+func TestRunGuardWithANilClientIsMisconfigured(t *testing.T) {
+	if res := RunGuard(context.Background(), nil, GuardInput{User: "jane@acme.com", Action: "LOGIN"}); res.Status != 500 ||
+		res.Body.Error.Code != "misconfigured" || res.Body.Touchque.Reason != "misconfigured" {
+		t.Fatalf("status=%d body=%+v", res.Status, res.Body)
+	}
+	if res := RunGuard(context.Background(), nil, GuardInput{Action: "LOGIN"}); res.Status != 401 {
+		t.Fatalf("no user: status=%d", res.Status)
+	}
+}
+
+func TestIsStatusPollWithANilClientIsFalse(t *testing.T) {
+	if IsStatusPoll(nil, GuardInput{User: "jane@acme.com", Action: "LOGIN", Token: "v1.e30.x"}) {
+		t.Fatal("a nil client cannot verify a token: not a status poll")
+	}
+}

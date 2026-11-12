@@ -38,7 +38,7 @@ if err != nil {
     log.Fatal(err)
 }
 
-mux.Handle("/transfer", touchque.Require(tq, "SEND_MONEY", transferHandler, touchque.RequireOptions{
+mux.Handle("/transfer", touchque.Require(tq, "SEND_MONEY", http.HandlerFunc(transferHandler), touchque.RequireOptions{
     User: func(r *http.Request) string { return sessionUser(r) },
     Details: func(r *http.Request) []touchque.LoginDetail {
         return []touchque.LoginDetail{{Label: "Amount", Value: amountFromRequest(r)}}
@@ -66,6 +66,123 @@ header `X-Touchque-Token: <token>` — see
 [`@touchque/web`](https://www.npmjs.com/package/@touchque/web), which does
 this loop for you in the browser. Once approved, the retried request reaches
 `next` exactly once.
+
+While the first-time QR is up, polls answer `{"touchque": {"state": "enroll", "expiresAt": ...}}` without
+`enroll`: keep showing the QR you have. A new QR comes with `enroll.qrCodeDataUrl` when the old one
+expired. Pages on `@touchque/web` need 2.1.0.
+
+### Refusals in your own error shape
+
+A refusal answers 401 (nobody signed in), 403 (`rejected`, `blocked`), 408 (`expired`), 423 (`frozen`) or
+429 (`rate_limited`, both with `Retry-After`), and 500 `misconfigured` / 503 `unavailable` when Touchque is
+not set up or cannot be reached. The body is `{"touchque": {"state": ..., "reason": ...}}`, with
+`"error": {"code", "message"}` on 401, 500 and 503. `RequireOptions.ErrorBody` sends your app's own shape
+instead:
+
+```go
+mux.Handle("/transfer", touchque.Require(tq, "SEND_MONEY", http.HandlerFunc(transferHandler), touchque.RequireOptions{
+    User: func(r *http.Request) string { return sessionUser(r) },
+    ErrorBody: func(r touchque.GuardRefusal) any {
+        return map[string]string{"message": r.Message, "code": r.Code}
+    },
+}))
+// 403 {"code":"rejected","message":"The approval was rejected.","touchque":{"state":"rejected",...}}
+```
+
+It is called for every answer with status 400 or above, never for a 202 step, with a
+`touchque.GuardRefusal`: `Status`; `Code` (the guard's error code, else the step's `Reason`, else its
+`State`); `Message` (the guard's error message, else "The approval was rejected.", "The approval
+expired. Try again.", "Too many rejected approvals. Try again later.", "Too many attempts. Try again
+later." or "The approval was refused."); and `Touchque`, a copy of the step. What it returns counts by
+its JSON encoding: a value that encodes to a JSON object (a map, a struct) is sent with `touchque` set to
+the step, so `@touchque/web` still sees the state (no `token` is added); anything else (a string, a
+number, a slice, nil) is sent as it is. The status and headers stay. A panic, or a value
+`encoding/json` cannot encode, sends the default body and logs `[Touchque] ErrorBody failed` (see
+[Logging](#logging)).
+
+Every refusal (status 400 and above) from `Require` and from the relay also carries
+`X-Touchque-State: <state>`, and `X-Touchque-Reason: <reason>` when the step has one: `@touchque/web`
+2.1.0 reads the step from them when the body has no `touchque`. A page on another origin needs them in
+`Access-Control-Expose-Headers`.
+
+### Without API keys
+
+`Require(nil, ...)` builds the client from `TQ_API_KEY` / `TQ_API_SECRET` (`touchque.New()`) on the first
+request, and keeps it once built:
+
+```go
+mux.Handle("/transfer", touchque.Require(nil, "SEND_MONEY", http.HandlerFunc(transferHandler), touchque.RequireOptions{
+    User:   func(r *http.Request) string { return sessionUser(r) },
+    Logger: logger, // optional *slog.Logger: Require's lines and those of the client it builds
+}))
+```
+
+While the keys are not set, the route answers **500**
+`{"touchque": {"state": "blocked", "reason": "misconfigured"}, "error": {"code": "misconfigured",
+"message": "Two-factor approval is not configured correctly."}}` with `Cache-Control: no-store` (401
+`unauthenticated` when nobody is signed in), `next` never runs, and nothing panics (`Require` still
+panics without `User`: that is a wiring bug). With `RequireOptions.Logger` set,
+`[Touchque] TQ_API_KEY and TQ_API_SECRET are not set: routes guarded by Touchque answer 500 misconfigured.`
+is logged once per process. It is a 500, not a 503: a deploy mistake should show in your monitoring, not
+invite retries. `@touchque/web` shows "Approvals are not set up correctly on this site." `RunGuard` with
+a nil client answers the same 500; `New()` and `NewClient` are unchanged.
+
+## Guard inside your handler
+
+When your own checks come first (the balance, who owns the account), call `RunGuard` in the handler
+instead of wrapping it in `Require`. It is the same guard and never panics for Touchque: send its
+`Status` and `Body` as JSON with `Cache-Control: no-store` (and `Retry-After` on 423 and 429), and do the
+action once `Approved` is set:
+
+```go
+func transfer(w http.ResponseWriter, r *http.Request) {
+    user := sessionUser(r)
+    amount, err := strconv.Atoi(r.FormValue("amount"))
+    if err != nil || amount > balanceOf(user) { // your checks first: no push for a transfer you refuse anyway
+        http.Error(w, "insufficient funds", http.StatusBadRequest)
+        return
+    }
+
+    res := touchque.RunGuard(r.Context(), tq, touchque.GuardInput{ // tq nil (New failed): 500 misconfigured
+        User: user, Action: "SEND_MONEY",
+        // The same on every poll: build them from your own state.
+        Details:   []touchque.LoginDetail{{Label: "Amount", Value: strconv.Itoa(amount) + " EUR"}},
+        IP:        clientIP(r), // the end user's address (see the Quick start)
+        UserAgent: r.UserAgent(),
+        Token:     r.Header.Get(touchque.GuardTokenHeader),
+        Offline:   r.Header.Get(touchque.GuardOfflineHeader) == "1",
+        Code:      r.Header.Get(touchque.GuardCodeHeader),
+        CodeType:  r.Header.Get(touchque.GuardCodeTypeHeader),
+    })
+    if res.Approved == nil {
+        w.Header().Set("Content-Type", "application/json")
+        w.Header().Set("Cache-Control", "no-store")
+        if res.Body.Touchque.RetryAfter > 0 {
+            w.Header().Set("Retry-After", strconv.Itoa(res.Body.Touchque.RetryAfter))
+        }
+        w.WriteHeader(res.Status)
+        _ = json.NewEncoder(w).Encode(res.Body)
+        return
+    }
+
+    sendMoney(user, amount) // once: the approval is used up
+    _ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "approval": res.Approved})
+}
+```
+
+The answers are `Require`'s. 202 `{"touchque": step, "token": ...}` until the phone answers: the page
+shows the step and sends the request again with `X-Touchque-Token` (`@touchque/web` does), and
+`Approved` comes exactly once, for this user, action and details. While the first-time QR is up the 202
+step is `{"state": "enroll", "expiresAt": ...}` without `enroll`: keep the QR on screen; a new one comes
+in `enroll.qrCodeDataUrl` after the old one expired. A refusal is 401, 403, 408, 423 or 429; 500
+`misconfigured` and 503 `unavailable` when Touchque is not set up or cannot be reached.
+
+With a rate limit of your own in front of it, count a request that only polls
+(`touchque.IsStatusPoll(tq, in)`: it reads the status, or keeps the first-time QR) apart from a new
+attempt, and set `in.BeforeStart`: `RunGuard` calls it at most once, right before a first-time-QR token
+would start something after all (a push now that the phone is linked, or a new QR). Charge your per-user
+limit there and return your 429 as a `*touchque.GuardResult` to answer it instead, or nil to go on. The
+relay does this for `POST /login`.
 
 ## Action types
 
@@ -129,20 +246,15 @@ mux.Handle("/touchque/", http.StripPrefix("/touchque", touchque.NewRelayHandler(
 ## The three primitives, if you're not using `Require`
 
 ```go
-step, _ := tq.Start(ctx, "SEND_MONEY", touchque.StartOptions{
-    User:    "jane@acme.com",
-    Details: []touchque.LoginDetail{{Label: "Amount", Value: "250 EUR"}},
-})
+details := []touchque.LoginDetail{{Label: "Amount", Value: "250 EUR"}}
+step, err := tq.Start("SEND_MONEY", "jane@acme.com", touchque.StartOptions{Details: details})
 // step.State: touchque.StepWaiting (show step.Number) | touchque.StepEnroll (show step.Enroll.QRCodeDataURL)
 //             | StepApproved | StepRejected | StepExpired | StepPasskeyRequired | StepFrozen | StepBlocked
 
-latest, _ := tq.Check(ctx, step.RequestID)
+latest, err := tq.Check(step.RequestID) // latest.State
 
 // Once approved, consume it exactly once, right before doing the protected thing:
-approval, err := tq.Complete(ctx, step.RequestID, touchque.CompleteExpectations{
-    User: "jane@acme.com", Action: "SEND_MONEY",
-    Details: []touchque.LoginDetail{{Label: "Amount", Value: "250 EUR"}},
-})
+approval, err := tq.Complete(step.RequestID, "jane@acme.com", "SEND_MONEY", touchque.CompleteExpect{Details: details})
 ```
 
 `Complete` verifies the approval was actually issued for this user, action
@@ -185,7 +297,8 @@ fails verification.
 ## Webhooks
 
 ```go
-event, err := tq.Webhook.Verify(rawBody, r.Header.Get("X-Signature"))
+rawBody, _ := io.ReadAll(r.Body) // the body exactly as received
+event, err := tq.Webhook.Verify(string(rawBody), r.Header.Get("X-Signature"))
 if err != nil {
     w.WriteHeader(http.StatusForbidden) // not from Touchque
     return
@@ -304,7 +417,7 @@ push when it says so.
 2. On the server, turn on `SilentSignIn`:
 
 ```go
-mux.Handle("/login/2fa", touchque.Require(tq, "LOGIN", signInHandler, touchque.RequireOptions{
+mux.Handle("/login/2fa", touchque.Require(tq, "LOGIN", http.HandlerFunc(signInHandler), touchque.RequireOptions{
     User:         func(r *http.Request) string { return passwordVerifiedUser(r) },
     SilentSignIn: true,
 }))
@@ -617,7 +730,7 @@ See [SECURITY.md](https://github.com/Touchque/touchque-go/blob/main/SECURITY.md)
 
 ## Logging
 
-The SDK writes nothing to the standard `log` package. To see its own problems (a misconfigured guard, a failed `OnChallenge`, a relay without `LoginUser`), set `Config.Logger` to a `*slog.Logger`; nil, the default, logs nothing. Lines carry an error's type and text, never the request.
+The SDK writes nothing to the standard `log` package. To see its own problems (a misconfigured guard, a failed `OnChallenge` or `ErrorBody`, a relay without `LoginUser`), set `Config.Logger` to a `*slog.Logger`; nil, the default, logs nothing. `Require(nil, …)` has no `Config`: set `RequireOptions.Logger` there, which also hears about missing `TQ_API_KEY` / `TQ_API_SECRET` (once per process). Lines carry an error's type and text, never the request.
 
 ## License
 

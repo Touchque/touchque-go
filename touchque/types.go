@@ -21,6 +21,7 @@ type ResetSecretResponse struct {
 	Secret           string   `json:"secret"`
 	ExternalUsername string   `json:"externalUsername"`
 	ExpiresAt        string   `json:"expiresAt"`
+	TTLMs            int      `json:"ttlMs"`
 	QRCodeDataURL    string   `json:"qrCodeDataUrl"`
 	RecoveryCodes    []string `json:"recoveryCodes"`
 }
