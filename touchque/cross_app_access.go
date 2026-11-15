@@ -38,11 +38,13 @@ package touchque
 //	req.Header.Set("DPoP", proof)
 //
 // An authorization server that checks DPoP proofs passes the proof key's thumbprint; a bound
-// ID-JAG without it is refused:
+// ID-JAG without it is refused. It verifies the proof (and the nonce, when it asks for one)
+// before this call, since the verifier uses up the ID-JAG's jti:
 //
 //	claims, err := v.VerifyWithDPoP(ctx, assertion, authenticatedClientID, proofJKT)
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -70,21 +72,31 @@ const (
 	idJagTyp           = "oauth-id-jag+jwt"
 )
 
-// IDJAGError is a refused ID-JAG or exchange; Code is the OAuth error
-// (invalid_grant for a bad ID-JAG).
+// IDJAGError is a refused ID-JAG or exchange; Code is the OAuth error (invalid_grant for a bad
+// ID-JAG; temporarily_unavailable when RequestIDJAG or RedeemIDJAG got no readable answer from
+// the token endpoint, or the verifier could not read the identity provider's keys).
 type IDJAGError struct {
 	Code    string
 	Message string
-	Status  int
-	// DPoPNonce is the latest valid DPoP-Nonce (RFC 9449 section 8) the token endpoint sent
-	// during this call: from the answer to the retry when that had one, else from the first
-	// answer; "" when none was of valid syntax. With a DPoPKey, a token endpoint that asked for
-	// a nonce (use_dpop_nonce) already got the request once more with a valid one; this field is
-	// for diagnostics, and for resource requests (a proof's nonce is IDJAGDPoPProofOptions.Nonce).
+	// Status is the token endpoint's HTTP status; 0 when there was no answer (temporarily_unavailable)
+	// or the error is the verifier's.
+	Status int
+	// DPoPNonce is the latest valid DPoP-Nonce (RFC 9449 section 8) the token endpoint sent in
+	// any answer during this call (also the answer before an invalid_response or a body that
+	// broke off): from the answer to the retry when that had one, else from the first answer; ""
+	// when none was of valid syntax. With a DPoPKey, a token endpoint that asked for a nonce
+	// (use_dpop_nonce) already got the request once more with a valid one; this field is for
+	// diagnostics, and for resource requests (a proof's nonce is IDJAGDPoPProofOptions.Nonce).
 	DPoPNonce string
+	// Err is net/http's error when the token endpoint could not be reached or its answer read
+	// (Code temporarily_unavailable); Unwrap returns it, for errors.Is and errors.As. nil otherwise.
+	Err error
 }
 
 func (e *IDJAGError) Error() string { return fmt.Sprintf("touchque: %s (%s)", e.Message, e.Code) }
+
+// Unwrap returns Err, the transport error behind a temporarily_unavailable (nil otherwise).
+func (e *IDJAGError) Unwrap() error { return e.Err }
 
 // IDJAGVerifierConfig configures a verifier at your authorization server.
 type IDJAGVerifierConfig struct {
@@ -203,12 +215,13 @@ func (k *IDJAGDPoPKey) signer() (*Agent, error) {
 	return signerFor(k.priv, nil), nil
 }
 
-// IDJAGDPoPProofOptions are a DPoP proof's optional claims.
+// IDJAGDPoPProofOptions are a DPoP proof's optional claims; "" leaves a claim out.
 type IDJAGDPoPProofOptions struct {
 	// AccessToken: a request that sends a DPoP-bound access token (Authorization: DPoP <token>)
 	// carries its hash in the proof (ath).
 	AccessToken string
-	// Nonce: the DPoP-Nonce the server this request goes to asked for (RFC 9449 sections 8 and 9).
+	// Nonce: the DPoP-Nonce the server this request goes to asked for (RFC 9449 sections 8 and 9),
+	// put in the proof as given (its syntax is not checked).
 	Nonce string
 }
 
@@ -225,14 +238,16 @@ func IDJAGDPoPProof(key *IDJAGDPoPKey, target string) (string, error) {
 // Authorization: DPoP <token> and DPoP: a proof for that call's method and URL with
 // AccessToken set.
 //
-// htm is method trimmed and uppercased; "" (or only blanks) is POST, and a method with anything
-// but RFC 9110 token characters is a *ConfigError.
+// htm is method with ASCII blanks (space, \t, \r, \n, \v, \f) trimmed, then uppercased; "" (or
+// only those blanks) is POST, and a method with anything but RFC 9110 token characters left is a
+// *ConfigError (a NUL or a non-ASCII space is not trimmed).
 //
 // htu is target's scheme, host and path: scheme and host lowercased, the default port dropped,
 // "/" for an empty path, no query or fragment. The path is the one Go's HTTP client sends,
 // URL.EscapedPath: as written when that is a valid percent-encoding, otherwise re-escaped (a
-// space becomes %20), never decoded; its "." and ".." segments (also written %2e) are resolved.
-// A target that is not an absolute URL, or has an invalid port, is a *ConfigError.
+// space becomes %20), never decoded, and with its "." and ".." segments kept as written (net/http
+// sends them so). A target that is not an absolute http or https URL with a host, or has an
+// invalid port, is a *ConfigError.
 func IDJAGDPoPProofWith(key *IDJAGDPoPKey, method, target string, opts IDJAGDPoPProofOptions) (string, error) {
 	signer, err := key.signer()
 	if err != nil {
@@ -258,11 +273,11 @@ func IDJAGDPoPProofWith(key *IDJAGDPoPKey, method, target string, opts IDJAGDPoP
 	return signer.sign(map[string]interface{}{"typ": "dpop+jwt", "jwk": signer.publicJWK}, claims)
 }
 
-// dpopHTM is a proof's htm: method trimmed and uppercased, POST when nothing is left. A method
-// with anything but RFC 9110 token characters is a *ConfigError (checked before uppercasing, so
-// no non-ASCII letter turns into an ASCII one).
+// dpopHTM is a proof's htm: method with ASCII blanks trimmed, then uppercased; POST when nothing
+// is left. A method with anything but RFC 9110 token characters is a *ConfigError (checked before
+// uppercasing, so no non-ASCII letter turns into an ASCII one).
 func dpopHTM(method string) (string, error) {
-	m := strings.TrimSpace(method)
+	m := strings.Trim(method, " \t\r\n\v\f")
 	if m == "" {
 		return "POST", nil
 	}
@@ -280,19 +295,19 @@ func isTChar(c byte) bool {
 }
 
 // htuDefaultPorts are the ports htu leaves out.
-var htuDefaultPorts = map[string]string{"http": "80", "https": "443", "ws": "80", "wss": "443", "ftp": "21"}
+var htuDefaultPorts = map[string]string{"http": "80", "https": "443"}
 
-// dpopHTU is a proof's htu for target (see IDJAGDPoPProofWith). The path is EscapedPath, the
-// one Go sends in the request line, with its dot segments resolved.
+// dpopHTU is a proof's htu for target (see IDJAGDPoPProofWith). The path is EscapedPath, the one
+// net/http sends in the request line (RequestURI), dot segments and all.
 func dpopHTU(target string) (string, error) {
 	u, err := url.Parse(target)
 	if err != nil {
-		return "", &ConfigError{Message: "touchque: a DPoP proof needs an absolute URL: " + err.Error()}
-	}
-	if u.Scheme == "" || u.Host == "" {
-		return "", &ConfigError{Message: fmt.Sprintf("touchque: a DPoP proof needs an absolute URL, not %q", target)}
+		return "", &ConfigError{Message: "touchque: a DPoP proof needs an absolute http or https URL: " + err.Error()}
 	}
 	scheme := strings.ToLower(u.Scheme)
+	if (scheme != "http" && scheme != "https") || u.Hostname() == "" {
+		return "", &ConfigError{Message: fmt.Sprintf("touchque: a DPoP proof needs an absolute http or https URL, not %q", target)}
+	}
 	host, port := strings.TrimSuffix(u.Host, ":"), u.Port()
 	if port != "" {
 		host = strings.TrimSuffix(host, ":"+port)
@@ -304,33 +319,11 @@ func dpopHTU(target string) (string, error) {
 			host += ":" + port
 		}
 	}
-	return scheme + "://" + strings.ToLower(host) + resolveDotSegments(u.EscapedPath()), nil
-}
-
-// resolveDotSegments resolves the "." and ".." segments of an escaped path (also written with
-// %2e, in either case); an empty path is "/".
-func resolveDotSegments(p string) string {
-	segments := strings.Split(strings.TrimPrefix(p, "/"), "/")
-	out := make([]string, 0, len(segments))
-	for i, s := range segments {
-		last := i == len(segments)-1
-		switch strings.ToLower(s) {
-		case "..", ".%2e", "%2e.", "%2e%2e":
-			if len(out) > 0 {
-				out = out[:len(out)-1]
-			}
-			if last {
-				out = append(out, "")
-			}
-		case ".", "%2e":
-			if last {
-				out = append(out, "")
-			}
-		default:
-			out = append(out, s)
-		}
+	path := u.EscapedPath()
+	if path == "" {
+		path = "/"
 	}
-	return "/" + strings.Join(out, "/")
+	return scheme + "://" + strings.ToLower(host) + path, nil
 }
 
 // IDJAGVerifier checks the ID-JAG an authenticated client presents (jwt-bearer grant).
@@ -458,6 +451,8 @@ func (v *IDJAGVerifier) Verify(ctx context.Context, assertion, clientID string) 
 
 // VerifyWithDPoP is Verify with dpopJKT, the thumbprint of the DPoP proof you verified on this
 // request ("" when none): an ID-JAG bound to a key (cnf.jkt) is refused without a matching one.
+// Verify the proof, and the nonce when your server requires one, before calling it: a verified
+// ID-JAG's jti is used up, so one spent on a request whose proof then fails cannot come again.
 func (v *IDJAGVerifier) VerifyWithDPoP(ctx context.Context, assertion, clientID, dpopJKT string) (*IDJAGClaims, error) {
 	bad := func(m string) error { return &IDJAGError{Code: "invalid_grant", Message: m} }
 	parts := strings.Split(assertion, ".")
@@ -563,22 +558,31 @@ func xaaSafeURL(raw string) bool {
 	return u.Scheme == "https" || (u.Scheme == "http" && (host == "localhost" || host == "127.0.0.1" || host == "::1"))
 }
 
+// xaaMaxAnswer is the most of a token endpoint's answer that is read: 1 MiB.
+const xaaMaxAnswer = 1 << 20
+
 // xaaPostForm posts form to a token endpoint with the client's authentication and, with a key,
-// a DPoP proof. Only a 2xx answer whose body is one JSON object (at most 1 MiB) is an answer: any
-// other status is an *IDJAGError with the body's error (server_error without one), and a 2xx
-// without such a body an *IDJAGError invalid_response.
-func xaaPostForm(ctx context.Context, client *http.Client, target string, form url.Values, id, secret string, dpopKey *IDJAGDPoPKey) (map[string]interface{}, error) {
+// a DPoP proof; it returns the answer and the latest valid DPoP-Nonce the call saw. Only a 2xx
+// answer whose body is one JSON object (at most 1 MiB) is an answer: any other status is an
+// *IDJAGError with that status and the body's error (server_error without a valid one), a 2xx
+// without such a body an *IDJAGError invalid_response, and no readable answer an *IDJAGError
+// temporarily_unavailable (xaaNoAnswer). Every *IDJAGError carries the call's latest valid nonce.
+func xaaPostForm(ctx context.Context, client *http.Client, target string, form url.Values, id, secret string, dpopKey *IDJAGDPoPKey) (map[string]interface{}, string, error) {
 	if !xaaSafeURL(target) {
-		return nil, fmt.Errorf("touchque: %s must be an https URL", target)
+		return nil, "", fmt.Errorf("touchque: %s must be an https URL", target)
 	}
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
 	body := form.Encode()
+	// nonce is the latest valid DPoP-Nonce of any answer in this call: the retry's proof carries
+	// it, and every *IDJAGError has it.
+	nonce := ""
 	// post sends the form with the client's authentication and, with a key, a fresh proof (new
-	// jti and iat) that carries nonce when it is set. data is the JSON object the body starts
-	// with (nil when it starts with none), whole whether that object is all of the body.
-	post := func(nonce string) (resp *http.Response, data map[string]interface{}, whole bool, err error) {
+	// jti and iat) that carries nonce when it is set, then reads the answer: data is the JSON
+	// object its body starts with (nil when it starts with none), whole whether that object is
+	// all of the body.
+	post := func() (resp *http.Response, data map[string]interface{}, whole bool, err error) {
 		req, err := http.NewRequestWithContext(ctx, "POST", target, strings.NewReader(body))
 		if err != nil {
 			return nil, nil, false, err
@@ -596,72 +600,116 @@ func xaaPostForm(ctx context.Context, client *http.Client, target string, form u
 			req.SetBasicAuth(url.QueryEscape(id), url.QueryEscape(secret))
 		}
 		if resp, err = client.Do(req); err != nil {
-			return nil, nil, false, err
+			return nil, nil, false, xaaNoAnswer(ctx, target, err, nonce)
 		}
 		defer resp.Body.Close()
-		data, whole = xaaJSONObject(resp.Body)
-		return resp, data, whole, nil
-	}
-	resp, data, whole, err := post("")
-	if err != nil {
-		return nil, err
-	}
-	nonce := xaaDPoPNonce(resp.Header)
-	// The server wants its nonce in the proof (RFC 9449 section 8): the same request once more
-	// with a new proof that carries it, never a loop, and only with a nonce of valid syntax.
-	if dpopKey != nil && nonce != "" && xaaNonceAsked(resp, data) {
-		if resp, data, whole, err = post(nonce); err != nil {
-			return nil, err
-		}
+		// The answer's nonce counts as soon as its headers are in, also when its body breaks off.
 		if n := xaaDPoPNonce(resp.Header); n != "" {
 			nonce = n
 		}
+		raw, err := io.ReadAll(io.LimitReader(resp.Body, xaaMaxAnswer+1))
+		if err != nil {
+			return nil, nil, false, xaaNoAnswer(ctx, target, err, nonce)
+		}
+		data, whole = xaaJSONObject(raw)
+		return resp, data, whole, nil
+	}
+	resp, data, whole, err := post()
+	if err != nil {
+		return nil, nonce, err
+	}
+	// The server wants its nonce in the proof (RFC 9449 section 8): the same request once more
+	// with a new proof that carries it, never a loop, and only with a nonce of valid syntax (so
+	// far, nonce is the first answer's).
+	if dpopKey != nil && nonce != "" && xaaNonceAsked(resp, data) {
+		if resp, data, whole, err = post(); err != nil {
+			return nil, nonce, err
+		}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		code, _ := data["error"].(string)
 		msg, _ := data["error_description"].(string)
-		if code == "" {
-			code = "server_error"
-		}
 		if msg == "" {
 			msg = fmt.Sprintf("%s answered %d", target, resp.StatusCode)
 		}
-		return nil, &IDJAGError{Code: code, Message: msg, Status: resp.StatusCode, DPoPNonce: nonce}
+		return nil, nonce, &IDJAGError{Code: xaaErrorCode(data), Message: msg, Status: resp.StatusCode, DPoPNonce: nonce}
 	}
 	if data == nil || !whole {
-		return nil, &IDJAGError{Code: "invalid_response", Message: fmt.Sprintf("%s answered %d without a JSON object of at most 1 MiB", target, resp.StatusCode),
+		return nil, nonce, &IDJAGError{Code: "invalid_response", Message: fmt.Sprintf("%s answered %d without a JSON object of at most 1 MiB", target, resp.StatusCode),
 			Status: resp.StatusCode, DPoPNonce: nonce}
 	}
-	return data, nil
+	return data, nonce, nil
 }
 
-// xaaJSONObject reads body (at most 1 MiB): the JSON object it starts with, nil when it does
-// not start with one (no body, null, an array or other value, cut off, not JSON), and whether
-// that object is the whole body, blanks aside.
-func xaaJSONObject(body io.Reader) (map[string]interface{}, bool) {
-	dec := json.NewDecoder(io.LimitReader(body, 1<<20))
+// xaaNoAnswer is the error for a token-endpoint POST without a readable answer: not reached,
+// reset, the HTTP client's timeout, an answer net/http refuses (a malformed or too long header
+// section, say) or a body that breaks off. That is an *IDJAGError temporarily_unavailable with no
+// Status, the call's latest valid nonce, and err as Err. When ctx has ended (cancelled by the
+// caller, or past its deadline), it is err itself, so errors.Is(err, context.Canceled) or
+// context.DeadlineExceeded holds; net/http reports context.Cause(ctx), so when that is another
+// error, ctx.Err() is wrapped in too.
+func xaaNoAnswer(ctx context.Context, target string, err error, nonce string) error {
+	if done := ctx.Err(); done != nil {
+		if !errors.Is(err, done) {
+			err = fmt.Errorf("%w (%w)", err, done)
+		}
+		return err
+	}
+	why := err
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		why = ue.Err // the URL is in the message already
+	}
+	return &IDJAGError{Code: "temporarily_unavailable", Message: fmt.Sprintf("no readable answer from %s: %v", target, why), DPoPNonce: nonce, Err: err}
+}
+
+// xaaErrorCode is an error answer's OAuth error code: the body's "error" when it is a string of 1
+// to 128 RFC 6749 error characters (%x20-21 / %x23-5B / %x5D-7E: printable ASCII and space, but
+// not a double quote or backslash), else server_error. It never comes from WWW-Authenticate.
+func xaaErrorCode(data map[string]interface{}) string {
+	code, _ := data["error"].(string)
+	if code == "" || len(code) > 128 {
+		return "server_error"
+	}
+	for i := 0; i < len(code); i++ {
+		if c := code[i]; c < 0x20 || c > 0x7e || c == '"' || c == '\\' {
+			return "server_error"
+		}
+	}
+	return code
+}
+
+// xaaJSONObject is the JSON object an answer's body starts with, nil when it starts with none (no
+// body, null, an array or other value, cut off, not JSON), and whether that object is all of the
+// body, blanks aside. Only the first 1 MiB is read: a longer body is never whole.
+func xaaJSONObject(body []byte) (map[string]interface{}, bool) {
+	whole := len(body) <= xaaMaxAnswer
+	if !whole {
+		body = body[:xaaMaxAnswer]
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
 	var data map[string]interface{}
 	if err := dec.Decode(&data); err != nil || data == nil {
 		return nil, false
 	}
 	_, err := dec.Token()
-	return data, err == io.EOF
+	return data, whole && err == io.EOF
 }
 
 // xaaDPoPNonce is the answer's DPoP-Nonce when it is one nonce of valid syntax (RFC 9449:
 // 1*NQCHAR, printable ASCII but space, double quote and backslash); "" when the header is
-// missing, empty or invalid, or comes more than once with different values.
+// missing, empty or invalid. Sent more than once (on several lines, or joined with ", " on one
+// line, as HTTP libraries and proxies combine lines), it counts only when every value is the same.
 func xaaDPoPNonce(h http.Header) string {
-	values := h.Values("DPoP-Nonce")
-	if len(values) == 0 {
-		return ""
-	}
-	for _, v := range values[1:] {
-		if v != values[0] {
-			return ""
+	nonce, first := "", true
+	for _, line := range h.Values("DPoP-Nonce") {
+		for _, v := range strings.Split(line, ", ") {
+			if first {
+				nonce, first = v, false
+			} else if v != nonce {
+				return ""
+			}
 		}
 	}
-	nonce := values[0]
 	if nonce == "" {
 		return ""
 	}
@@ -682,22 +730,25 @@ func xaaNonceAsked(resp *http.Response, data map[string]interface{}) bool {
 	return data["error"] == "use_dpop_nonce" || (resp.StatusCode == 401 && xaaNonceChallenge(resp.Header))
 }
 
-// xaaNonceChallenge reads WWW-Authenticate (RFC 9110 section 11.6.1): items split at commas
-// outside quoted strings; one that is not name=value starts a challenge (its scheme, then maybe
-// its first parameter). Each line takes a few passes, so a long header costs linear time.
+// xaaNonceChallenge says whether WWW-Authenticate (RFC 9110 section 11.6.1) has a DPoP challenge
+// whose own error parameter is exactly use_dpop_nonce. Several lines are one list, joined with
+// ", " (RFC 9110 section 5.3). Items split at commas outside quoted strings; one that is not
+// name=value starts a challenge (its scheme, then maybe its first parameter). Scheme and parameter
+// names match in any case; a quoted value has its quoted-pairs undone and needs its closing quote.
+// A few passes over the header: linear time.
 func xaaNonceChallenge(h http.Header) bool {
-	for _, line := range h.Values("WWW-Authenticate") {
-		dpop := false
-		for _, item := range splitUnquoted(line) {
-			name, rest := authToken(item)
-			if name == "" && rest == "" {
-				continue
-			}
-			if !strings.HasPrefix(rest, "=") {
-				dpop = strings.EqualFold(name, "DPoP")
-				name, rest = authToken(rest)
-			}
-			if dpop && strings.EqualFold(name, "error") && strings.HasPrefix(rest, "=") && strings.Trim(strings.TrimSpace(rest[1:]), `"`) == "use_dpop_nonce" {
+	dpop := false
+	for _, item := range splitUnquoted(strings.Join(h.Values("WWW-Authenticate"), ", ")) {
+		name, rest := authToken(item)
+		if name == "" && rest == "" {
+			continue // an empty list element
+		}
+		if !strings.HasPrefix(rest, "=") {
+			dpop = strings.EqualFold(name, "DPoP")
+			name, rest = authToken(rest)
+		}
+		if dpop && strings.EqualFold(name, "error") && strings.HasPrefix(rest, "=") {
+			if v, ok := authParamValue(rest[1:]); ok && v == "use_dpop_nonce" {
 				return true
 			}
 		}
@@ -705,7 +756,8 @@ func xaaNonceChallenge(h http.Header) bool {
 	return false
 }
 
-// splitUnquoted splits a header list at the commas outside quoted strings.
+// splitUnquoted splits a header list at the commas outside quoted strings (in a quoted string, a
+// backslash escapes the character after it).
 func splitUnquoted(s string) []string {
 	var out []string
 	start, quoted := 0, false
@@ -731,6 +783,33 @@ func authToken(s string) (string, string) {
 		i++
 	}
 	return s[:i], strings.TrimLeft(s[i:], " \t")
+}
+
+// authParamValue is an auth-param's value (RFC 9110 section 11.2), from what follows its "=": a
+// token, or a quoted string's content with its quoted-pairs (a backslash and the character after
+// it) undone. ok is false for anything else: no value, a quoted string without its closing quote,
+// or more than blanks after the value.
+func authParamValue(s string) (value string, ok bool) {
+	s = strings.TrimLeft(s, " \t")
+	if !strings.HasPrefix(s, `"`) {
+		v, rest := authToken(s)
+		return v, v != "" && rest == ""
+	}
+	var b strings.Builder
+	for i := 1; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			if i++; i == len(s) {
+				return "", false
+			}
+			b.WriteByte(s[i])
+		case '"':
+			return b.String(), strings.TrimLeft(s[i+1:], " \t") == ""
+		default:
+			b.WriteByte(s[i])
+		}
+	}
+	return "", false // no closing quote
 }
 
 // RequestIDJAGParams: the identity provider (Issuer, or TokenEndpoint), your app there and its
@@ -760,7 +839,13 @@ type IDJAG struct {
 }
 
 // RequestIDJAG trades a member's ID token for an ID-JAG (token exchange, client_secret_basic).
-// A token endpoint answer other than a 2xx with an ID-JAG is an *IDJAGError.
+// A token endpoint answer other than a 2xx with an ID-JAG is an *IDJAGError: a non-2xx (a 3xx
+// too; redirects are not followed with the default client) with its Status and the body's error
+// (server_error without a valid one), a 2xx without an ID-JAG invalid_response. No readable
+// answer (not reached, reset, the HTTP client's timeout, an answer net/http refuses, a body that
+// breaks off) is temporarily_unavailable with no Status and net/http's error as Err; when ctx
+// ends (cancelled or past its deadline), its error comes back instead, for errors.Is. Every such
+// *IDJAGError has the call's latest valid DPoPNonce.
 func RequestIDJAG(ctx context.Context, p RequestIDJAGParams) (*IDJAG, error) {
 	var signer *Agent
 	if p.DPoPKey != nil {
@@ -795,13 +880,13 @@ func RequestIDJAG(ctx context.Context, p RequestIDJAGParams) (*IDJAG, error) {
 	if p.Scope != "" {
 		form.Set("scope", p.Scope)
 	}
-	data, err := xaaPostForm(ctx, p.HTTPClient, endpoint, form, p.ClientID, p.ClientSecret, p.DPoPKey)
+	data, nonce, err := xaaPostForm(ctx, p.HTTPClient, endpoint, form, p.ClientID, p.ClientSecret, p.DPoPKey)
 	if err != nil {
 		return nil, err
 	}
 	assertion, _ := data["access_token"].(string)
 	if data["issued_token_type"] != IDJAGTokenType || assertion == "" {
-		return nil, &IDJAGError{Code: "invalid_response", Message: "the identity provider did not answer with an ID-JAG"}
+		return nil, &IDJAGError{Code: "invalid_response", Message: "the identity provider did not answer with an ID-JAG", DPoPNonce: nonce}
 	}
 	out := &IDJAG{Assertion: assertion}
 	if n, ok := data["expires_in"].(float64); ok {
@@ -838,7 +923,9 @@ type RedeemIDJAGParams struct {
 
 // RedeemIDJAG trades an ID-JAG for an access token at the other service (jwt-bearer): the token
 // endpoint's JSON answer. A refusal, any other non-2xx answer (redirects are not followed with
-// the default client) and a 2xx whose body is not a JSON object are an *IDJAGError.
+// the default client) and a 2xx whose body is not a JSON object are an *IDJAGError, and so is no
+// readable answer (temporarily_unavailable with net/http's error as Err), as in RequestIDJAG; when
+// ctx ends (cancelled or past its deadline), its error comes back instead, for errors.Is.
 func RedeemIDJAG(ctx context.Context, p RedeemIDJAGParams) (map[string]interface{}, error) {
 	form := url.Values{"grant_type": {JWTBearerGrant}, "assertion": {p.Assertion}}
 	if p.ClientSecret == "" {
@@ -850,5 +937,9 @@ func RedeemIDJAG(ctx context.Context, p RedeemIDJAGParams) (map[string]interface
 	if p.Scope != "" {
 		form.Set("scope", p.Scope)
 	}
-	return xaaPostForm(ctx, p.HTTPClient, p.TokenEndpoint, form, p.ClientID, p.ClientSecret, p.DPoPKey)
+	data, _, err := xaaPostForm(ctx, p.HTTPClient, p.TokenEndpoint, form, p.ClientID, p.ClientSecret, p.DPoPKey)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
