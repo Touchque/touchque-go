@@ -437,11 +437,41 @@ jag, err := touchque.RequestIDJAG(ctx, touchque.RequestIDJAGParams{Issuer: "http
 tokens, err := touchque.RedeemIDJAG(ctx, touchque.RedeemIDJAGParams{TokenEndpoint: "https://auth.files.example/token",
 	ClientID: "acme", ClientSecret: filesSecret, Assertion: jag.Assertion})
 
-// Your own authorization server (jwt-bearer grant):
-v, _ := touchque.NewIDJAGVerifier(touchque.IDJAGVerifierConfig{Issuer: "https://sso.touchque.com", Audience: "https://auth.files.example"})
-claims, err := v.Verify(ctx, r.PostFormValue("assertion"), authenticatedClientID)
+// Your own authorization server (jwt-bearer grant). Build the verifier once, at startup: the jtis
+// it has used and the identity provider's keys live in it.
+v, err := touchque.NewIDJAGVerifier(touchque.IDJAGVerifierConfig{Issuer: "https://sso.touchque.com", Audience: "https://auth.files.example"})
+// in the token endpoint, per request:
+claims, err := v.Verify(r.Context(), r.PostFormValue("assertion"), authenticatedClientID)
 
 res, err := touchque.VerifyAgentCard(ctx, cardJSON, touchque.VerifyAgentCardOptions{CardURL: "https://agent.example/.well-known/agent-card.json"})
+```
+
+Sender-constrained with DPoP (RFC 9449), optional: `touchque.NewIDJAGDPoPKey()` makes a key (keep it in this process); set it as `DPoPKey` on both `RequestIDJAGParams` and `RedeemIDJAGParams`, and each call sends a fresh proof. The ID-JAG is then bound to the key (`cnf.jkt` is `key.Thumbprint`), so a copy is useless without it; `jag.DPoPBound` says whether the identity provider bound it (one without DPoP support ignores the proof). A token endpoint that answers `use_dpop_nonce` with a `DPoP-Nonce` header of valid nonce syntax (RFC 9449 §8: printable ASCII without space, `"` or `\`) gets the same request once more, with a new proof that carries the nonce; if that fails too, the `*IDJAGError` has the server's latest valid nonce in `DPoPNonce`, for diagnostics (the token call was already retried with it). When the other service's authorization server supports DPoP, the access token it issues is DPoP-bound too (`token_type` `DPoP`): call its API with `Authorization: DPoP <token>` and `DPoP: <proof>`, made by `IDJAGDPoPProofWith` for that request's method and URL with the access token (`ath`; `Nonce` when the API asks for one). One without DPoP support issues a Bearer token (`token_type` `Bearer`): send `Authorization: Bearer <token>` and no proof. A proof's `htm` is the method trimmed and uppercased (`""` is POST); its `htu` is the URL with scheme and host lowercased, the default port dropped, `/` for an empty path, the path from `URL.EscapedPath` (as written when that is a valid percent-encoding, otherwise re-escaped; never decoded) with `.` and `..` segments resolved, and no query or fragment. The private key is unexported (`key.PrivateKey()` returns a copy, `NewIDJAGDPoPKeyFrom` takes a P-256 key), so `encoding/json`, `fmt` and `log/slog` never print it.
+
+```go
+key, err := touchque.NewIDJAGDPoPKey()
+jag, err := touchque.RequestIDJAG(ctx, touchque.RequestIDJAGParams{ /* as above */ DPoPKey: key}) // jag.DPoPBound
+tokens, err := touchque.RedeemIDJAG(ctx, touchque.RedeemIDJAGParams{ /* as above */ Assertion: jag.Assertion, DPoPKey: key})
+
+accessToken, _ := tokens["access_token"].(string)
+req, _ := http.NewRequestWithContext(ctx, "GET", "https://files.example/v1/files", nil)
+if tokenType, _ := tokens["token_type"].(string); strings.EqualFold(tokenType, "DPoP") {
+	proof, err := touchque.IDJAGDPoPProofWith(key, req.Method, req.URL.String(), touchque.IDJAGDPoPProofOptions{AccessToken: accessToken})
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "DPoP "+accessToken)
+	req.Header.Set("DPoP", proof)
+} else { // an authorization server without DPoP support issues a Bearer token
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+}
+```
+
+Another company's authorization server that accepts Touchque ID-JAGs must verify the DPoP proof itself (`typ` `dpop+jwt`, its signature with the `jwk` it carries, `htm`, `htu`, `iat`, each `jti` once) and check `cnf.jkt`, refusing a bound ID-JAG unless the proof key's thumbprint matches; this SDK's verifier does the `cnf.jkt` part when given that thumbprint (`VerifyWithDPoP` returns it as `claims.CnfJKT`; `Verify` refuses bound ID-JAGs).
+
+```go
+// After verifying the request's DPoP proof (proofJWK: the jwk in its header):
+claims, err := v.VerifyWithDPoP(r.Context(), r.PostFormValue("assertion"), authenticatedClientID, touchque.JWKThumbprint(proofJWK)) // claims.CnfJKT
 ```
 
 ## Silent sign-ins (stop asking when nothing is new)
@@ -744,6 +774,47 @@ for {
 (`{"format": "email", "email": ...}`) and `TXN` the case code of Touchque's decision. The keys come from the issuer's
 `/.well-known/ssf-configuration` (or set `JWKSURI` / `JWKS`). A SET does not expire: keep the jtis you handled and skip
 a repeat.
+
+## Testing your routes
+
+This SDK has no in-memory fake: point a client at an `httptest.Server` with `Config.BaseURL` (`http://` is accepted
+for `127.0.0.1` and `localhost`, `APIKey` must start with `tq_`, and the stub need not check the request signature).
+For a user with a phone, `Require` and `RunGuard` make three calls: `POST /login/request` on the first request,
+`GET /login/status/{requestId}` on each poll (`PENDING`, then `CONFIRMED`) and, in the poll that sees `CONFIRMED`,
+`POST /login/{requestId}/consume`. The consume answer must repeat the request's `externalUsername`, `type`, `details`
+and `referenceId`, or the guard answers 500 `misconfigured`. Other calls come only with enrollment, silent sign-ins
+and offline codes. A 404 `{"code": "device_not_linked"}` from `/login/request` shows the first-time QR instead:
+`POST /auth/generate-secret` (answer `qrCodeDataUrl` and an ISO 8601 `expiresAt` or `ttlMs`, or each poll makes a new
+QR; on a 409 the guard reads `GET /users/{user}` and, unless it shows a linked phone, calls `POST /auth/secret/reset`),
+then `GET /users/{user}` on each poll until it answers `used: true` or a `deviceId`, and then the push starts. With
+`SilentSignIn` and a browser proof, `POST /risk/check` comes first. Offline codes call `POST /offline/challenge`, then
+`POST /offline/verify` (`POST /offline/totp/verify` for the time-based code).
+
+```go
+srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    switch r.Method + " " + r.URL.Path {
+    case "POST /login/request":
+        io.WriteString(w, `{"requestId":"req_1"}`)
+    case "GET /login/status/req_1":
+        io.WriteString(w, `{"status":"CONFIRMED"}`) // "PENDING" while the phone waits
+    case "POST /login/req_1/consume": // repeats what POST /login/request asked for
+        io.WriteString(w, `{"consumed":true,"externalUsername":"jane@acme.com","type":"SEND_MONEY","details":[{"label":"Amount","value":"5 EUR"}]}`)
+    default:
+        http.NotFound(w, r)
+    }
+}))
+defer srv.Close()
+tq, err := touchque.New(&touchque.Config{APIKey: "tq_test", APISecret: "test-secret", BaseURL: srv.URL})
+if err != nil {
+    t.Fatal(err)
+}
+touchque.SetDefaultClient(tq) // for Require(nil, …) and RunGuard(ctx, nil, …)
+t.Cleanup(func() { touchque.SetDefaultClient(nil) })
+```
+
+The first request answers 202 `waiting` with a token; sent again with `X-Touchque-Token: <token>`, it runs the
+route once. Only the API makes an approval single-use: this stub answers every consume, so a replayed token runs
+the route again; answer a second consume 409 `{"code": "already_used"}` and the guard answers 408 `expired`.
 
 ## Errors
 

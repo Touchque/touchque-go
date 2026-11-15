@@ -56,8 +56,8 @@ type RiskCheckOptions struct {
 // approval_too_old, policy_every_sign_in, other_phone, new_country,
 // new_network, network_unknown, hosting_network, critical_action,
 // sensitive_action, risk_signal, push_fatigue, fraud_report, new_factor,
-// vishing_shield, checks_incomplete, silent_mode_shadow, phone_not_linked,
-// frozen, and more: new codes are added in minor versions.
+// vishing_shield, automated_client, checks_incomplete, silent_mode_shadow,
+// phone_not_linked, frozen, and more: new codes are added in minor versions.
 type RiskReason struct {
 	Code string `json:"code"`
 	// Text is English.

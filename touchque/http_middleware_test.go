@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -590,5 +593,75 @@ func TestSetDefaultClientReplacesOrForgetsTheDefaultClient(t *testing.T) {
 	})
 	if rec := serve(broken, "jane@acme.com", ""); rec.Code != 503 || !strings.Contains(buf.String(), "[Touchque] ErrorBody failed") {
 		t.Fatalf("Require(nil, …) logs to the default client's logger: status=%d logged %q", rec.Code, buf.String())
+	}
+}
+
+// The README's "Testing your routes" stub, as written there: a normal approval makes
+// POST /login/request, then GET /login/status/{id} and POST /login/{id}/consume, through the
+// client given and through the default one.
+func TestRequire_TheReadmeStubRunsTheRouteOnce(t *testing.T) {
+	var mu sync.Mutex
+	var calls []string
+	var used atomic.Bool // the API's single use, which the stub does not have
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		if used.Load() && r.URL.Path == "/login/req_1/consume" {
+			w.WriteHeader(409)
+			io.WriteString(w, `{"code":"already_used"}`)
+			return
+		}
+		switch r.Method + " " + r.URL.Path {
+		case "POST /login/request":
+			io.WriteString(w, `{"requestId":"req_1"}`)
+		case "GET /login/status/req_1":
+			io.WriteString(w, `{"status":"CONFIRMED"}`) // "PENDING" while the phone waits
+		case "POST /login/req_1/consume": // repeats what POST /login/request asked for
+			io.WriteString(w, `{"consumed":true,"externalUsername":"jane@acme.com","type":"SEND_MONEY","details":[{"label":"Amount","value":"5 EUR"}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	tq, err := New(&Config{APIKey: "tq_test", APISecret: "test-secret", BaseURL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	SetDefaultClient(tq) // for Require(nil, …) and RunGuard(ctx, nil, …)
+	t.Cleanup(func() { SetDefaultClient(nil) })
+
+	for _, c := range []*Client{tq, nil} {
+		mu.Lock()
+		calls = nil
+		mu.Unlock()
+		h := requireHandler(c, "SEND_MONEY")
+		first := serve(h, "jane@acme.com", "")
+		var waiting struct {
+			Touchque Step   `json:"touchque"`
+			Token    string `json:"token"`
+		}
+		if err := json.Unmarshal(first.Body.Bytes(), &waiting); err != nil || first.Code != 202 || waiting.Touchque.State != StepWaiting || waiting.Token == "" {
+			t.Fatalf("first request: %d %s", first.Code, first.Body)
+		}
+		if done := serve(h, "jane@acme.com", waiting.Token); done.Code != 200 || !strings.Contains(done.Body.String(), `"done":true`) {
+			t.Fatalf("with the token: %d %s", done.Code, done.Body)
+		}
+		mu.Lock()
+		got := strings.Join(calls, ", ")
+		mu.Unlock()
+		if want := "POST /login/request, GET /login/status/req_1, POST /login/req_1/consume"; got != want {
+			t.Fatalf("calls: %s, want %s", got, want)
+		}
+		// The stub answers every consume, so a replayed token runs the route again...
+		if again := serve(h, "jane@acme.com", waiting.Token); again.Code != 200 {
+			t.Fatalf("replay on the stub: %d %s", again.Code, again.Body)
+		}
+		// ...and a second consume answered 409 already_used is a 408 expired.
+		used.Store(true)
+		if again := serve(h, "jane@acme.com", waiting.Token); again.Code != 408 || !strings.Contains(again.Body.String(), `"reason":"already_used"`) {
+			t.Fatalf("replay after 409: %d %s", again.Code, again.Body)
+		}
+		used.Store(false)
 	}
 }
