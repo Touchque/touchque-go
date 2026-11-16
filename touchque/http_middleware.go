@@ -26,9 +26,10 @@ type RequireOptions struct {
 	Details func(*http.Request) []LoginDetail
 	// ReferenceID: your own transaction id, bound to the approval.
 	ReferenceID func(*http.Request) string
-	// IP: end user's address (default: the host part of r.RemoteAddr — set
-	// this explicitly behind a reverse proxy, from your trusted
-	// X-Forwarded-For hop; never the leftmost hop, which the client controls).
+	// IP: end user's address, sent with the push and with a first-time QR
+	// (default: the host part of r.RemoteAddr — set this explicitly behind a
+	// reverse proxy, from your trusted X-Forwarded-For hop; never the
+	// leftmost hop, which the client controls).
 	IP func(*http.Request) string
 	// SilentSignIn (default off): a new attempt whose browser sent its
 	// device-bound key proof (X-Touchque-Browser, added by @touchque/web with

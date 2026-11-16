@@ -28,7 +28,8 @@ import (
 //
 // Routes (relative to the mount point):
 //
-//	POST   /enroll/start                  (auth required) -> GenerateSecretResponse
+//	POST   /enroll/start                  (auth required) -> GenerateSecretResponse; sends the browser's IP (RelayOptions.IP)
+//	                                      and User-Agent, as POST /login does, so the phone shows where the QR was asked for
 //	GET    /enroll/status                 (auth required) -> {"linked", "used", "deviceId"}
 //	POST   /login                         (pre-auth) -> 202 {"touchque": step, "token"} until approved (same contract as Require;
 //	                                      with SilentSignIn, a known browser is approved at once)
@@ -169,9 +170,9 @@ type RelayOptions struct {
 	OnAuthenticated func(w http.ResponseWriter, r *http.Request, info AuthenticatedInfo) error
 
 	// IP is the end user's address, used for the per-IP rate limit and shown
-	// on the phone (default: the host part of r.RemoteAddr — set this
-	// explicitly behind a reverse proxy, from your trusted X-Forwarded-For
-	// hop).
+	// on the phone, with the push or as where a first-time QR was asked for
+	// (default: the host part of r.RemoteAddr — set this explicitly behind a
+	// reverse proxy, from your trusted X-Forwarded-For hop).
 	IP func(*http.Request) string
 
 	// SilentSignIn for POST /login (default off): a new sign-in whose browser
@@ -482,7 +483,10 @@ func (h *relayHandler) enrollStart(w http.ResponseWriter, r *http.Request, _ rel
 	if userID == "" {
 		return
 	}
-	res, err := h.client.Auth.GenerateSecret(userID)
+	// The browser's address and User-Agent, as on the push: the phone shows
+	// where the QR was asked for before it links.
+	ip, userAgent := h.ipOf(r), r.UserAgent()
+	res, err := h.client.Auth.GenerateSecretWithOptions(GenerateSecretOptions{ExternalUsername: userID, ClientIP: ip, UserAgent: userAgent})
 	if err == nil {
 		writeRelayJSON(w, http.StatusOK, res)
 		return
@@ -504,7 +508,7 @@ func (h *relayHandler) enrollStart(w http.ResponseWriter, r *http.Request, _ rel
 		writeRelayJSON(w, http.StatusConflict, map[string]interface{}{"error": "already_linked", "message": "A phone is already linked to this account."})
 		return
 	}
-	reset, err := h.client.Auth.ResetSecret(userID)
+	reset, err := h.client.Auth.ResetSecretWithOptions(ResetSecretOptions{ExternalUsername: userID, ClientIP: ip, UserAgent: userAgent})
 	if err != nil {
 		sendRelayError(w, err)
 		return

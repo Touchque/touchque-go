@@ -67,7 +67,11 @@ type DeviceRiskSignal struct {
 	// device_many_accounts, device_signup_burst, device_id_resets,
 	// device_many_countries, device_wrong_site, device_report_replayed,
 	// device_private_window (context only), device_step_up_by_admin,
-	// device_identification_missing (no identification, or one that does not verify).
+	// device_identification_missing (no identification, or one that does not verify),
+	// device_pointer_synthetic (the pointer or a finger moved like software),
+	// device_new_storage_burst and device_network_signup_burst (many new browsers,
+	// or sign-ups, in a day from phones like this one on this network).
+	// New codes are added in minor versions.
 	Code string
 	Text string
 	// Strength is what a step-up for it should be: number_match, passkey, or none (context only).

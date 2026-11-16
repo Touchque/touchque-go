@@ -103,7 +103,8 @@ type StartOptions struct {
 	Details []LoginDetail
 	// ReferenceID: your own transaction id, bound to the approval.
 	ReferenceID string
-	// IP / UserAgent: the end user's — shown on the phone.
+	// IP / UserAgent: the end user's — shown on the phone, with the push or
+	// as where a first-time QR was asked for.
 	IP        string
 	UserAgent string
 	// NoEnroll: set true to get Step{State: StepEnroll, Reason:
@@ -181,7 +182,7 @@ func (c *Client) Start(action, user string, opts StartOptions) (*Step, error) {
 			// No phone, and this guard may not show a QR: say so, so the page stops polling.
 			return &Step{State: StepEnroll, Reason: "enrollment_off"}, nil
 		}
-		return enrollStep(c, user)
+		return enrollStep(c, user, opts.IP, opts.UserAgent)
 	case apiErr.StatusCode == 423:
 		return &Step{State: StepFrozen, RetryAfter: apiErr.RetryAfter, CaseCode: apiErr.CaseCode}, nil
 	case apiErr.StatusCode == 429:
@@ -217,10 +218,12 @@ func dataError(err *APIError) string {
 	return ""
 }
 
-// enrollStep issues a first-time-linking QR. Never unlinks a phone: a secret
-// is only re-issued when the account is confirmed NOT linked.
-func enrollStep(c *Client, user string) (*Step, error) {
-	gen, err := c.Auth.GenerateSecret(user)
+// enrollStep issues a first-time-linking QR, with the end user's ip and
+// userAgent (as on the push) for the setup context the phone shows. Never
+// unlinks a phone: a secret is only re-issued when the account is confirmed
+// NOT linked.
+func enrollStep(c *Client, user, ip, userAgent string) (*Step, error) {
+	gen, err := c.Auth.GenerateSecretWithOptions(GenerateSecretOptions{ExternalUsername: user, ClientIP: ip, UserAgent: userAgent})
 	if err == nil {
 		return enrollQR(gen.QRCodeDataURL, gen.RecoveryCodes, gen.ExpiresAt, gen.TTLMs), nil
 	}
@@ -232,7 +235,7 @@ func enrollStep(c *Client, user string) (*Step, error) {
 	if cerr == nil && (current.Used || current.DeviceID != "") {
 		return &Step{State: StepEnroll, Reason: "already_linked"}, nil
 	}
-	reset, err := c.Auth.ResetSecret(user)
+	reset, err := c.Auth.ResetSecretWithOptions(ResetSecretOptions{ExternalUsername: user, ClientIP: ip, UserAgent: userAgent})
 	if err != nil {
 		return nil, err
 	}

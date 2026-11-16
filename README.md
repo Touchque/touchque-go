@@ -85,6 +85,39 @@ ask the user to link the Touchque app first (`@touchque/web` 2.2.0 does).
 A 202 state other than `waiting` and `enroll` (`passkey_required`, `offline`, an `enroll` step with a
 `reason`) needs `@touchque/web`, or your own UI following the contract.
 
+### Where the first-time QR was asked for
+
+Before it links, the phone shows where the first-time QR was asked for (city and country, browser and
+device, time), so someone tricked into scanning another person's QR sees a place and device that are not
+theirs. Touchque records this setup context from the request that made the QR, `POST /auth/generate-secret`
+and `POST /auth/secret/reset` alike; it is never in the QR. `Require`, `RunGuard`, `Start` and the relay's
+`POST /enroll/start` send the browser's address and User-Agent for it, the same ones they send with the push
+(the `IP` setting above), also when they reset a QR nobody scanned. When you call `GenerateSecretWithOptions`
+or `ResetSecretWithOptions` yourself, pass them from the request as you do for sign-in:
+
+```go
+gen, err := tq.Auth.GenerateSecretWithOptions(touchque.GenerateSecretOptions{
+    ExternalUsername: user,
+    ClientIP:         clientIP(r), // the end user's address, as for sign-in
+    UserAgent:        r.UserAgent(),
+})
+if err != nil {
+    return err
+}
+showQR(w, gen.QRCodeDataURL) // your page; for a new QR, ResetSecretWithOptions takes the same fields
+```
+
+Touchque cleans both itself (a port is dropped, a loopback or non-IP address is ignored, the User-Agent
+loses control characters and is cut at 512 characters) and never refuses the request over them.
+There is no setup context when the request for the QR named no browser (no usable IP address or
+User-Agent), after a reset without them (the old QR's is cleared), and for older QRs and servers.
+
+The phone reads it with `POST /auth/secret/validate`, its public call after the scan (`ValidateSecret` here,
+whose `SetupContext` is nil in those cases). The answer's `farFromPhone` compares the QR's place with the
+address of whoever calls validate, so it is about the phone only when the phone asks: `ValidateSecret` from
+your server (in a test, say) shows what Touchque recorded, but its `FarFromPhone` compares with your server's
+address.
+
 ### Refusals in your own error shape
 
 A refusal answers 401 (nobody signed in), 403 (`rejected`, `blocked`), 408 (`expired`), 423 (`frozen`) or

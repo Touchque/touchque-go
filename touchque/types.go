@@ -310,4 +310,54 @@ type ValidateSecretResponse struct {
 	Reason           string `json:"reason,omitempty"`
 	UsedAt           string `json:"usedAt,omitempty"`
 	ExpiredAt        string `json:"expiredAt,omitempty"`
+	// SetupContext is where the QR was asked for, as Touchque recorded it
+	// from the request that made the QR (GenerateSecretOptions, or
+	// ResetSecretOptions for a reset; it is never in the QR). nil when that
+	// request named no browser (no usable IP address or User-Agent), after a
+	// reset without them, and for older QRs and servers.
+	SetupContext *SetupContext `json:"setupContext,omitempty"`
+}
+
+// SetupContext is where a first-time linking QR was asked for: the address
+// and User-Agent your server sent with the request for it
+// (GenerateSecretOptions, or ResetSecretOptions for a reset) and when. The
+// phone shows it before it links, so someone tricked into scanning another
+// person's QR sees a place and device that are not theirs. What Touchque
+// does not know is empty (nil for Location, Device and FarFromPhone).
+type SetupContext struct {
+	// IP is the public address the QR was asked from; "" when none was
+	// given or it is not public (a private or carrier-grade NAT address).
+	IP string `json:"ip,omitempty"`
+	// Location is that address's place, by GeoIP.
+	Location *SetupLocation `json:"location,omitempty"`
+	// Device is the browser and device, from the User-Agent.
+	Device *SetupDevice `json:"device,omitempty"`
+	// RequestedAt is when the QR was asked for (ISO 8601).
+	RequestedAt string `json:"requestedAt,omitempty"`
+	// FarFromPhone says whether that place is far from whoever called POST
+	// /auth/secret/validate. That is the phone's public call, so when the
+	// Touchque app makes it, it is about the phone; called from your server
+	// (ValidateSecret), it compares with your server's address and says
+	// nothing about the phone. nil when Touchque cannot tell (an address
+	// missing or not public, a place unknown).
+	FarFromPhone *bool `json:"farFromPhone,omitempty"`
+}
+
+// SetupLocation is the place of a SetupContext's address, by GeoIP.
+type SetupLocation struct {
+	City    string `json:"city,omitempty"`
+	Country string `json:"country,omitempty"`
+	// CountryCode is the ISO 3166-1 alpha-2 code, e.g. "DE".
+	CountryCode string `json:"countryCode,omitempty"`
+}
+
+// SetupDevice is the browser and device of a SetupContext, read from its
+// User-Agent, e.g. "Safari", "iOS", "iPhone".
+type SetupDevice struct {
+	Browser string `json:"browser,omitempty"`
+	OS      string `json:"os,omitempty"`
+	// Model is the device model, when the User-Agent names one: e.g.
+	// "iPhone", "iPad", "Mac" or an Android model such as "Pixel 8". It may
+	// be "" (null in the API's answer), as may Browser and OS.
+	Model string `json:"model,omitempty"`
 }
