@@ -884,3 +884,120 @@ MIT © [Touchque](https://touchque.com)
 ## Touchque Login (hosted sign-in)
 
 Sign-up and sign-in pages for your own customers, on your brand, with OpenID Connect. See [support.touchque.com/touchque-login](https://support.touchque.com/touchque-login) for this SDK's client and a quickstart.
+
+`client.Identity` is the Management API: your customers' accounts, apps, custom domains and the tenant's
+settings, from your server with your workspace key. A refusal is an `*APIError` whose `Data["error"]` (also
+its `Message`) is the code; `Data` holds the rest of the answer (`field`, `message`…).
+
+### Custom domains
+
+Your own sign-in domain (`login.acme.com`) in place of `<slug>.login.touchque.com`:
+
+```go
+domain, err := client.Identity.CustomDomains.Create(map[string]interface{}{"domain": "login.acme.com"})
+id, _ := domain["id"].(string)                            // domain["records"]: the DNS records to add
+domain, err = client.Identity.CustomDomains.Verify(id)    // checks its TXT record and DNS now
+domain, err = client.Identity.CustomDomains.Get(id)       // found in the list
+overview, err := client.Identity.CustomDomains.Overview() // Domains, VerifiedDomains, SlugPasskeys
+
+// Once verified, make it the issuer (and, with SetCustomDomainOnly, the only sign-in address).
+_, err = client.Identity.CustomDomains.Update(id, map[string]interface{}{"primary": true})
+```
+
+The records are a TXT record that proves the domain (none for a domain on one that your organization
+verified, Organization → Domains) and a CNAME to `<slug>.login.touchque.com`. Touchque checks a new domain
+by itself every 5 minutes for 72 hours (`autoCheckUntil`); `Verify` checks it now. Each domain carries
+`dns`, what its DNS said at the last check (`points`, `problems`: `dns_missing`, `points_elsewhere`,
+`cloudflare_proxy`, `caa_blocks`). `List` returns the domains alone; `Overview` (also
+`client.Identity.GetCustomDomains()`, an alias) returns the whole answer typed, with `VerifiedDomains` (nil
+when they could not be read) and `SlugPasskeys`. The API has no read by id, so `Get` finds the domain in
+the list; none with that id is the API's own 404, `Data["error"]` `not_found`.
+`client.Identity.CheckDomainCertificate(id)` checks a verified domain's certificate.
+
+### Passkey domain
+
+A passkey is made for one domain, its relying party ID (RP ID), and works there and on the hosts under it.
+Without a passkey domain each sign-in host is its own: a passkey made on `login.acme.com` works only there.
+With one, passkeys made on it or on a host under it are made for it, so they keep working when sign-in
+moves to another host under it:
+
+```go
+tenant, err := client.Identity.SetPasskeyDomain("acme.com") // "" for none; tenant["passkeyDomain"]
+```
+
+Only a domain you proved: one of your verified custom domains, or a domain above one that your
+organization verified (Organization → Domains), since a TXT record on `login.acme.com` proves nothing about
+`acme.com`. `client.Identity.CustomDomains.Overview()` returns both (`Domains`, `VerifiedDomains`) and
+`SlugPasskeys`: customer passkeys made on `<slug>.login.touchque.com`, which belong to that name and never
+work on a custom domain. Set it before customers make passkeys on your custom domains. Refusals:
+
+- 400 `invalid_request` with `Data["field"]` `passkeyDomain`: not a domain;
+- 409 `not_your_domain`: neither a verified custom domain nor a domain above one that your organization
+  verified;
+- 409 `organization_unavailable`: your organization's verified domains could not be read; try again;
+- 409 `passkeys_exist`: the change, also back to none, would leave customer passkeys behind
+  (`Data["count"]` of them);
+- before Touchque Login is set up for the workspace: 400 `invalid_request` with `Data["field"]` `slug` (the
+  tenant PUT would set it up, which needs a slug).
+
+### Moving customers in from your user database
+
+Customers who have no account in Touchque Login yet sign in with the password they have with you: Touchque
+asks your endpoint, and when the password is right it makes the account with that password (kept as
+Argon2id) and never asks about that customer again. Your endpoint is asked only while passwords are on
+(`signInMethods.password`).
+
+```go
+_, err := client.Identity.SetUserStore(map[string]interface{}{"url": "https://api.acme.com/touchque/user-store"})
+ping, err := client.Identity.TestUserStore("") // one signed user_store.ping: ping["ok"], ping["error"], ping["ms"]
+store, err := client.Identity.GetUserStore()   // url, enabled, active, movedIn, lastCall, paused, updatedAt
+_, err = client.Identity.SetUserStore(map[string]interface{}{"enabled": false}) // stop asking, keep the url
+_, err = client.Identity.RemoveUserStore()     // forget the endpoint; accounts moved in stay
+```
+
+`SetUserStore` takes `url` (https, without a user name or password) and `enabled`, both optional: a
+left-out `url` keeps the one set, a left-out `enabled` its value (true for a new endpoint); 409
+`passwords_off` while passwords are off, 400 `invalid_request` (`Data["field"]`) for a bad `url`.
+`TestUserStore(url)` pings `url` without saving it (`""`: the endpoint set); a failed ping is `ok` false
+with `error`, not a Go error. `RemoveUserStore` answers 204 (a nil map) also when none is set; a 404
+`not_enabled` means Touchque Login is not set up.
+
+Touchque POSTs JSON to your endpoint, signed like its webhooks, with `tenant` (your slug), `timestamp` and
+`jti`:
+
+- `user_store.verify_password` `{email, password}`: a password sign-in of an address with no account yet;
+- `user_store.get_user` `{email}`: a password reset, an email-code sign-in or a sign-up with such an
+  address (the account is made without a password; the reset or the code proves the inbox);
+- `user_store.ping`: `TestUserStore`.
+
+Answer 200 within 5 seconds, the same for an unknown address and a wrong password:
+
+```go
+mux.HandleFunc("/touchque/user-store", func(w http.ResponseWriter, r *http.Request) {
+	raw, _ := io.ReadAll(r.Body)
+	ask, err := client.Webhook.Verify(string(raw), r.Header.Get("X-Signature"))
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized) // not from Touchque
+		return
+	}
+	email, _ := ask["email"].(string)
+	password, _ := ask["password"].(string)
+	var user interface{} // null: unknown address or wrong password
+	if c, ok := customers.Find(email); ok && (ask["event"] == "user_store.get_user" || c.PasswordMatches(password)) {
+		user = map[string]interface{}{"id": c.ID, "email": c.Email, "emailVerified": c.EmailVerified, "name": c.Name}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"user": user})
+})
+```
+
+`Verify` checks the signature over the raw text, as Touchque signed it, so a request verifies whatever the
+email or password holds; an unpaired surrogate (a JavaScript string may hold one) comes back as U+FFFD, so
+every string in the payload is valid UTF-8.
+
+`id` (yours: a string or a number, kept as the account's `externalId`) and `email` (the address asked
+about) are required; `emailVerified`, `name`, `givenName`, `familyName`, `nickname`, `picture` (https),
+`locale`, `phone`, `userMetadata` and `appMetadata` are optional. A 404 counts as `{"user": null}`. Anything
+else (another status, a redirect, a body that is not JSON or is over 64 KB, a `user` without `id` or for
+another address, no answer in 5 seconds) counts as unavailable, never as a wrong password: a password
+sign-in or a sign-up asks the customer to try again, and 5 in a row pause asking for a minute (`paused`).

@@ -9,6 +9,7 @@ package touchque
 //	job, _ := client.Identity.Imports.Start(map[string]interface{}{"users": []map[string]interface{}{{"email": e, "passwordHash": "$2b$10$…"}}})
 
 import (
+	"net/http"
 	"net/url"
 	"time"
 )
@@ -26,7 +27,7 @@ type IdentityResource struct {
 	Clients       *IdentityCrud
 	APIs          *IdentityCrud
 	Connections   *IdentityCrud
-	CustomDomains *IdentityCrud
+	CustomDomains *IdentityCustomDomains
 }
 
 func newIdentityResource(h *httpClient) *IdentityResource {
@@ -40,17 +41,17 @@ func newIdentityResource(h *httpClient) *IdentityResource {
 		Clients:       &IdentityCrud{http: h, base: "/identity/clients", listKey: "clients"},
 		APIs:          &IdentityCrud{http: h, base: "/identity/apis", listKey: "apis"},
 		Connections:   &IdentityCrud{http: h, base: "/identity/connections", listKey: "connections"},
-		CustomDomains: &IdentityCrud{http: h, base: "/identity/custom-domains", listKey: "domains"},
+		CustomDomains: &IdentityCustomDomains{IdentityCrud{http: h, base: "/identity/custom-domains", listKey: "domains"}},
 	}
 }
 
-// GetTenant returns the tenant (404 not_enabled until it is set up).
 // RotateClientSecret gives a Touchque Login application a new client secret,
 // shown once in the answer (clientSecret); the old one stops working.
 func (r *IdentityResource) RotateClientSecret(clientID string) (map[string]interface{}, error) {
 	return r.http.post("/identity/clients/"+idSeg(clientID)+"/rotate-secret", map[string]interface{}{})
 }
 
+// GetTenant returns the tenant (404 not_enabled until it is set up).
 func (r *IdentityResource) GetTenant() (map[string]interface{}, error) {
 	return r.http.get("/identity/tenant")
 }
@@ -79,10 +80,43 @@ func (r *IdentityResource) SetCustomDomainOnly(on bool) (map[string]interface{},
 	return r.http.put("/identity/tenant", map[string]interface{}{"customDomainOnly": on})
 }
 
+// SetPasskeyDomain sets the domain customer passkeys are made for, their relying party ID
+// (PUT /identity/tenant {"passkeyDomain"}): one of your verified custom domains, or a domain above
+// one that your organization verified (Organization → Domains: "acme.com" for "login.acme.com").
+// Passkeys made on it or on a host under it belong to it, so they keep working when sign-in moves
+// to another host under it. "" sends null: none, a passkey belongs to the host it was made on.
+// The answer is the tenant, with the passkeyDomain in use. Set it before customers make passkeys
+// on your custom domains: a change (also back to none) that would leave customer passkeys behind
+// is refused.
+//
+// Refusals are *APIError with the code in Data["error"] (also Message) and the field in
+// Data["field"]:
+//   - 400 invalid_request, field passkeyDomain: not a domain;
+//   - 409 not_your_domain: neither a verified custom domain nor a domain above one that your
+//     organization verified;
+//   - 409 organization_unavailable: your organization's verified domains could not be read; try
+//     again;
+//   - 409 passkeys_exist: the change would leave customer passkeys behind (Data["count"]);
+//   - before Touchque Login is set up for the workspace: 400 invalid_request with field slug (a
+//     PUT /identity/tenant then sets it up, which needs a slug: see UpdateTenant).
+func (r *IdentityResource) SetPasskeyDomain(domain string) (map[string]interface{}, error) {
+	var value interface{}
+	if domain != "" {
+		value = domain
+	}
+	return r.http.put("/identity/tenant", map[string]interface{}{"passkeyDomain": value})
+}
+
 // CheckDomainCertificate checks a verified custom domain's certificate at the sign-in edge now
 // (certificate: pending | active | error).
 func (r *IdentityResource) CheckDomainCertificate(domainID string) (map[string]interface{}, error) {
 	return r.http.post("/identity/custom-domains/"+idSeg(domainID)+"/check-certificate", map[string]interface{}{})
+}
+
+// GetCustomDomains is an alias of CustomDomains.Overview: GET /identity/custom-domains as the API
+// answers it, the domains with verifiedDomains and slugPasskeys.
+func (r *IdentityResource) GetCustomDomains() (*CustomDomainsOverview, error) {
+	return r.CustomDomains.Overview()
 }
 
 // Outbox is the delivery log. Message text only in the local dev inbox.
@@ -127,6 +161,49 @@ func (r *IdentityResource) RemoveDelivery(channel string) (map[string]interface{
 // TestDelivery sends one test message through the provider in use.
 func (r *IdentityResource) TestDelivery(channel, to string) (map[string]interface{}, error) {
 	return r.http.post("/identity/delivery/"+idSeg(channel)+"/test", map[string]interface{}{"to": to})
+}
+
+// GetUserStore reads how your customers move in from your own user database
+// (GET /identity/user-store): url (nil until set), enabled, active (asked: enabled and passwords
+// on), movedIn (accounts made from it so far), lastCall ({at, event, ok, status, ms, error}, nil
+// before the first), paused (5 failed calls in a row pause it for a minute), updatedAt and
+// signing. For an address with no account yet, Touchque POSTs user_store.verify_password
+// {email, password} (a password sign-in) or user_store.get_user {email} (a password reset, an
+// email-code sign-in or a sign-up) to url, with tenant, timestamp and jti, signed like its
+// webhooks: check each with Webhook.Verify. Answer 200 {"user": {"id", "email", "emailVerified",
+// "name", …}} or {"user": null} (the same for an unknown address and a wrong password) within
+// 5 seconds.
+func (r *IdentityResource) GetUserStore() (map[string]interface{}, error) {
+	return r.http.get("/identity/user-store")
+}
+
+// SetUserStore sets the endpoint and whether it is asked (PUT /identity/user-store), both
+// optional: "url" (https, no user name or password in it; left out, the one set stays) and
+// "enabled" (left out, it keeps its value: true for a new endpoint). The answer is GetUserStore's.
+// Refusals are *APIError with the code in Data["error"]: 409 passwords_off when it would be on
+// while passwords are off, 400 invalid_request (Data["field"] url or enabled).
+func (r *IdentityResource) SetUserStore(store map[string]interface{}) (map[string]interface{}, error) {
+	return r.http.put("/identity/user-store", store)
+}
+
+// TestUserStore sends one signed user_store.ping to url, without saving it, or to the endpoint
+// set when url is "" (POST /identity/user-store/test {"url"} or {}): {ok, error, ms}. A ping that
+// failed is ok false with error ("answered 500", "no answer in 5 seconds"…), not a Go error;
+// 400 invalid_request (Data["field"] url) when url is unusable, or "" with none set.
+func (r *IdentityResource) TestUserStore(url string) (map[string]interface{}, error) {
+	body := map[string]interface{}{}
+	if url != "" {
+		body["url"] = url
+	}
+	return r.http.post("/identity/user-store/test", body)
+}
+
+// RemoveUserStore stops asking your user database and forgets the endpoint
+// (DELETE /identity/user-store); accounts already moved in stay. The answer is 204, so the map
+// is nil, also when none was set: calling it again is no error. A 404 not_enabled means
+// Touchque Login is not set up.
+func (r *IdentityResource) RemoveUserStore() (map[string]interface{}, error) {
+	return r.http.delete("/identity/user-store")
 }
 
 // IdentityUsers is a tenant's customer accounts.
@@ -350,4 +427,79 @@ func (o *IdentityOrganizations) Invite(orgID string, invitation map[string]inter
 
 func (o *IdentityOrganizations) RevokeInvitation(orgID, invitationID string) (map[string]interface{}, error) {
 	return o.http.delete(o.base + "/" + idSeg(orgID) + "/invitations/" + idSeg(invitationID))
+}
+
+// IdentityCustomDomains is your own sign-in domains (login.acme.com): List, Overview, Get,
+// Create ({"domain"}; the DNS records to add are in the answer), Verify, Update ({"primary": true}
+// makes a verified domain the issuer) and Delete. CheckDomainCertificate (on client.Identity) checks
+// a verified domain's certificate.
+type IdentityCustomDomains struct{ IdentityCrud }
+
+// CustomDomainsOverview is GET /identity/custom-domains as the API answers it.
+type CustomDomainsOverview struct {
+	// Domains are the custom domains, each as List returns it: id, domain, status, primary, proof,
+	// organizationDomain, certificate, records, dns (what its DNS said at the last check, nil
+	// before the first), autoCheckUntil, createdAt. Empty, not nil, when there are none.
+	Domains []map[string]interface{} `json:"domains"`
+	// VerifiedDomains are the domains your organization verified (Organization → Domains): nil
+	// when they could not be read, empty when it verified none.
+	VerifiedDomains []string `json:"verifiedDomains"`
+	// SlugPasskeys counts the customer passkeys made on {slug}.login.touchque.com: they belong to
+	// that name and never work on a custom domain.
+	SlugPasskeys int `json:"slugPasskeys"`
+}
+
+// Overview returns the custom domains with your organization's verified domains and the passkeys
+// made on {slug}.login.touchque.com (GET /identity/custom-domains); List returns the domains alone.
+func (d *IdentityCustomDomains) Overview() (*CustomDomainsOverview, error) {
+	out, err := d.http.get(d.base)
+	if err != nil {
+		return nil, err
+	}
+	overview := &CustomDomainsOverview{Domains: []map[string]interface{}{}}
+	domains, _ := out["domains"].([]interface{})
+	for _, item := range domains {
+		if domain, ok := item.(map[string]interface{}); ok {
+			overview.Domains = append(overview.Domains, domain)
+		}
+	}
+	if verified, ok := out["verifiedDomains"].([]interface{}); ok {
+		overview.VerifiedDomains = make([]string, 0, len(verified))
+		for _, item := range verified {
+			if domain, ok := item.(string); ok {
+				overview.VerifiedDomains = append(overview.VerifiedDomains, domain)
+			}
+		}
+	}
+	if n, ok := out["slugPasskeys"].(float64); ok {
+		overview.SlugPasskeys = int(n)
+	}
+	return overview, nil
+}
+
+// Get returns the custom domain with this id, found in List: the API has no read by id. When
+// there is none, the error is the API's own 404: an *APIError with StatusCode 404 and "not_found"
+// in Data["error"] and Message.
+func (d *IdentityCustomDomains) Get(id string) (map[string]interface{}, error) {
+	domains, err := d.List(nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range domains {
+		if domain, ok := item.(map[string]interface{}); ok && domain["id"] == id {
+			return domain, nil
+		}
+	}
+	return nil, &APIError{
+		StatusCode: http.StatusNotFound,
+		Message:    "not_found",
+		Data:       map[string]interface{}{"error": "not_found", "message": "No custom domain with this id"},
+	}
+}
+
+// Verify checks the domain now (POST /identity/custom-domains/{id}/verify): its DNS TXT record
+// until it is verified (a domain on one that your organization verified needs none) and what its
+// DNS says (dns). The answer is the domain.
+func (d *IdentityCustomDomains) Verify(id string) (map[string]interface{}, error) {
+	return d.http.post(d.base+"/"+idSeg(id)+"/verify", map[string]interface{}{})
 }

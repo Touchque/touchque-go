@@ -258,6 +258,12 @@ func canonicalize(rawBody []byte) (string, error) {
 // payload. `signature` is the x-signature header value; pass "" to fall back
 // to the `signature` field carried inside the body.
 //
+// The signature is checked over the raw text, exactly as Touchque signed it,
+// so any string verifies, also one only JavaScript can hold: an unpaired
+// surrogate, written as an escape, which the payload holds as U+FFFD. Every
+// string handed back is valid UTF-8 (the password of a Touchque Login
+// user-store request can be read and checked).
+//
 // An optional toleranceSeconds overrides the 300s replay window (parity with
 // the Node/PHP/Python SDKs); pass 0 to disable the freshness check.
 func (w *WebhookResource) Verify(rawBody string, signature string, toleranceSeconds ...int) (map[string]interface{}, error) {
