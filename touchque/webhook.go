@@ -46,11 +46,6 @@ const (
 	EventDeviceUnlinked    = "DEVICE_UNLINKED"
 	EventPasskeyRegistered = "PASSKEY_REGISTERED"
 	EventPasskeyDeleted    = "PASSKEY_DELETED"
-	// EventDeviceRiskSignal: an identification or a DeviceRisk.Check raised a
-	// signal that asks for more (enforced or in shadow). Never a trait.
-	EventDeviceRiskSignal = "DEVICE_RISK_SIGNAL"
-	// EventDeviceRiskAlert: an alert rule of the workspace went off.
-	EventDeviceRiskAlert = "DEVICE_RISK_ALERT"
 	// EventApprovalReconfirmed: after the call, the user confirmed a
 	// provisional approval was theirs; critical actions are allowed again.
 	EventApprovalReconfirmed = "APPROVAL_RECONFIRMED"

@@ -70,7 +70,7 @@ function reset() {
     requests: [], linked: new Set(), pending: new Set(), calls: [], opts: {}, seq: 0,
     actions: new Map([['LOGIN', { critical: false }], ['SEND_MONEY', { critical: true }], ['PASSKEY_ENROLL', { critical: true }]]),
     usedEnrollApprovals: new Set(),
-    challenges: new Map(), usedNonces: new Set(),
+    challenges: new Map(), usedNonces: new Set(), devicePacks: new Map(),
     browsers: [], lastCheck: null,
     vouchers: new Map(), recoveries: [],
     flows: new Map(), secrets: new Map(),
@@ -495,9 +495,9 @@ route('GET', '/device-risk/events/([^/]+)', (req, res, b, m) => {
 // cursor (the index of the next one, as the real API's cursor is opaque too).
 // The query as it came is kept for the SDKs' tests (GET /__test/last-device-risk-search).
 const FAKE_EVENTS = [
-  { requestId: 'dre_fakeEvent00000000003', at: '2026-11-09T10:02:00.000Z', visitorId: FAKE_VISITOR, kind: 'sign_in', origin: 'https://shop.example.test', externalUsername: 'ada@example.com', country: 'TR', network: null, confidence: 0.99, matchedBy: 'key', sealed: true, stepUp: true, signals: [{ code: 'device_tampered', enforced: true }], caseCode: 'DRK-3EV', bot: { result: 'not_detected', reasons: [] } },
-  { requestId: 'dre_fakeEvent00000000002', at: '2026-11-09T10:01:00.000Z', visitorId: FAKE_VISITOR, kind: 'sign_in', origin: 'https://shop.example.test', externalUsername: 'ada@example.com', country: 'TR', network: null, confidence: 0.99, matchedBy: 'key', sealed: true, stepUp: false, signals: [], caseCode: null, bot: { result: 'not_detected', reasons: [] } },
-  { requestId: 'dre_fakeEvent00000000001', at: '2026-11-09T10:00:00.000Z', visitorId: 'tqv_fakeVisitor00000002', kind: 'sign_up', origin: 'https://shop.example.test', externalUsername: 'bob@example.com', country: 'DE', network: null, confidence: 0.6, matchedBy: 'new', sealed: false, stepUp: false, signals: [{ code: 'device_many_accounts', enforced: false }], caseCode: null, bot: { result: 'not_detected', reasons: [] } },
+  { requestId: 'dre_fakeEvent00000000003', at: '2026-11-09T10:02:00.000Z', visitorId: FAKE_VISITOR, kind: 'sign_in', origin: 'https://shop.example.test', externalUsername: 'ada@example.com', country: 'TR', network: null, confidence: 0.99, matchedBy: 'key', sealed: true, stepUp: true, signals: [{ code: 'device_tampered', enforced: true }], caseCode: 'DRK-3EV', bot: { result: 'not_detected', reasons: [], type: null, tools: [], agent: null, input: [] } },
+  { requestId: 'dre_fakeEvent00000000002', at: '2026-11-09T10:01:00.000Z', visitorId: FAKE_VISITOR, kind: 'sign_in', origin: 'https://shop.example.test', externalUsername: 'ada@example.com', country: 'TR', network: null, confidence: 0.99, matchedBy: 'key', sealed: true, stepUp: false, signals: [], caseCode: null, bot: { result: 'not_detected', reasons: [], type: null, tools: [], agent: null, input: [] } },
+  { requestId: 'dre_fakeEvent00000000001', at: '2026-11-09T10:00:00.000Z', visitorId: 'tqv_fakeVisitor00000002', kind: 'sign_up', origin: 'https://shop.example.test', externalUsername: 'bob@example.com', country: 'DE', network: null, confidence: 0.6, matchedBy: 'new', sealed: false, stepUp: false, signals: [{ code: 'device_many_accounts', enforced: false }], caseCode: null, bot: { result: 'not_detected', reasons: [], type: null, tools: [], agent: null, input: [] } },
 ];
 route('GET', '/device-risk/events', (req, res) => {
   const q = Object.fromEntries(new URL(req.url, 'http://x').searchParams);
@@ -520,6 +520,27 @@ route('GET', '/device-risk/events', (req, res) => {
   send(res, 200, { events: page, nextCursor: next, from: '2026-11-02T10:00:00.000Z', to: '2026-11-09T10:03:00.000Z', signalTexts: {} });
 });
 route('GET', '/__test/last-device-risk-search', (req, res) => send(res, 200, state.lastDeviceRiskSearch || {}));
+// POST /device-risk/activity: what the visitor did that the brand's server saw. As the real
+// API: a card number is 400 card_number_not_allowed, a card is { bin: 6-8 digits, last4: 4 };
+// the visitor is named by requestId, visitorId or clientIp. The fake counts nothing: a requestId
+// or visitorId with "flagged" in it answers abuse_card_testing for a payment, a not_found or
+// forbidden path of /admin or /.env answers its class. Kept for the SDKs' tests (GET /__test/last-device-risk-activity).
+const ACTIVITY_TYPES = ['payment_attempt', 'login_failed', 'not_found', 'forbidden', 'otp_sent', 'code_failed'];
+route('POST', '/device-risk/activity', (req, res, b) => {
+  state.lastDeviceRiskActivity = b;
+  if (!ACTIVITY_TYPES.includes(b.type)) return send(res, 400, { code: 'invalid_request', error: `type must be one of ${ACTIVITY_TYPES.join(', ')}` });
+  if (b.card && (b.card.number !== undefined || b.card.pan !== undefined)) return send(res, 400, { code: 'card_number_not_allowed', error: 'Send the card as { bin, last4 } only: never the card number.' });
+  if (b.card && (!/^\d{6,8}$/.test(String(b.card.bin || '')) || !/^\d{4}$/.test(String(b.card.last4 || '')))) return send(res, 400, { code: 'invalid_request', error: 'card must be { bin: 6 to 8 digits, last4: 4 digits }' });
+  if (!b.requestId && !b.visitorId && !b.clientIp) return send(res, 400, { code: 'invalid_request', error: 'name the visitor: requestId, visitorId or clientIp' });
+  const flagged = String(b.requestId || b.visitorId || '').includes('flagged');
+  const cls = typeof b.path === 'string' ? (/^\/admin/.test(b.path) ? 'admin' : /^\/\.env/.test(b.path) ? 'secrets' : 'other') : null;
+  send(res, 200, {
+    recorded: true, visitorId: b.requestId || b.visitorId ? FAKE_VISITOR : null,
+    ...(cls && { pathClass: cls }),
+    signals: flagged && b.type === 'payment_attempt' ? ['abuse_card_testing'] : [],
+  });
+});
+route('GET', '/__test/last-device-risk-activity', (req, res) => send(res, 200, state.lastDeviceRiskActivity || {}));
 const browserView = ({ user, ...rest }) => rest;
 route('GET', '/risk/browsers', (req, res) => {
   const user = new URL(req.url, 'http://x').searchParams.get('externalUsername');
@@ -920,8 +941,12 @@ route('POST', '/action-types', (req, res, b) => {
 route('GET', '/action-types', (req, res) => send(res, 200, [...state.actions.entries()].map(([type, a]) => ({ type, ...a }))));
 // Like the real API: a QR that follows a push is tied to it. A request the phone REJECTED kills the QR
 // (none is issued, a code is refused), and a push with number matching makes the QR show the same number.
+// qrFormat 'compact' answers a compact QR ('TQ3:...'), the default 'standard' a 'TQ2.' one, and the
+// answer says which; includeQrTerminal: true adds qrTerminal (a small Unicode half-block drawing).
 route('POST', '/offline/challenge', (req, res, b) => {
   if (state.opts.offlineDisabled) return send(res, 403, { error: 'offline_sign_disabled', code: 'offline_sign_disabled' });
+  if (b.qrFormat !== undefined && b.qrFormat !== 'standard' && b.qrFormat !== 'compact') return send(res, 400, { error: 'qrFormat must be "standard" or "compact"' });
+  const qrFormat = b.qrFormat === 'compact' ? 'compact' : 'standard';
   const linked = b.requestId ? state.requests.find((x) => x.id === b.requestId) : undefined;
   if (b.requestId && !linked) return send(res, 404, { error: 'request_not_found' });
   if (linked && linked.status === 'REJECTED') return send(res, 409, { error: 'request_rejected' });
@@ -929,7 +954,11 @@ route('POST', '/offline/challenge', (req, res, b) => {
   const id = `ch-${++state.seq}`;
   state.challenges.set(id, { user: b.externalUsername, type: b.type, used: false, requestId: linked && linked.id });
   const challengeCode = (linked && linked.challengeCode) || (b.requireNumberMatch === true ? '47' : undefined);
-  send(res, 200, { challengeId: id, qr: 'TQ2.x', qrDataUrl: 'data:image/png;base64,OFFLINE', expiresAt: 'soon', expiresInSeconds: 120, totpAvailable: true, ...(challengeCode ? { challengeCode } : {}) });
+  send(res, 200, {
+    challengeId: id, qr: qrFormat === 'compact' ? 'TQ3:X' : 'TQ2.x', qrFormat, qrDataUrl: 'data:image/png;base64,OFFLINE',
+    ...(b.includeQrTerminal === true ? { qrTerminal: '█▀▀▀█\n█ ▄ █\n▀▀▀▀▀' } : {}),
+    expiresAt: 'soon', expiresInSeconds: 120, totpAvailable: true, ...(challengeCode ? { challengeCode } : {}),
+  });
 });
 route('POST', '/offline/verify', (req, res, b) => {
   const ch = state.challenges.get(b.challengeId);
@@ -941,30 +970,110 @@ route('POST', '/offline/verify', (req, res, b) => {
   ch.used = true;
   send(res, 200, { approved: true, challengeId: b.challengeId, externalUsername: ch.user, type: ch.type });
 });
+// Offline sign-in packs, like the API but with a cheap KDF (the answer's kdf says 1,000 iterations):
+// the code of slot i is "ABCDEFGH" + two alphabet characters from i (devicePackCode below).
+// opts.devicePacksDisabled refuses with 403; a revoked computer answers 409 scope_revoked.
+const DEVICE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+export function devicePackCode(index) {
+  return `ABCDEFGH${DEVICE_ALPHABET[index % 32]}${DEVICE_ALPHABET[Math.floor(index / 32) % 32]}`;
+}
+// The API's checks (controllers/offlineDevice.controller.js): a scope id is 1-64 characters of
+// a-z, 0-9, ".", "_", "-" (lower-cased); user names match exactly; ranges as the API.
+const DEVICE_SCOPE_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const deviceScopeOf = (raw) => { const id = typeof raw === 'string' ? raw.trim().toLowerCase() : ''; return DEVICE_SCOPE_ID.test(id) ? id : null; };
+const deviceUserOf = (raw) => (typeof raw === 'string' && raw && raw.length <= 255 ? raw : null);
+const deviceText = (raw, max) => { const t = typeof raw === 'string' ? raw.trim() : ''; return t && t.length <= max ? t : null; };
+route('POST', '/offline/device-packs', (req, res, b) => {
+  if (state.opts.devicePacksDisabled) return send(res, 403, { error: 'offline_device_packs_disabled' });
+  const user = deviceUserOf(b.externalUsername);
+  const scopeId = deviceScopeOf(b.scope && b.scope.id);
+  const name = deviceText(b.scope && b.scope.name, 80);
+  const account = deviceText(b.account, 255);
+  const count = b.count === undefined ? 10 : b.count;
+  const days = b.validDays === undefined ? 14 : b.validDays;
+  if (!user) return send(res, 400, { error: 'externalUsername is required' });
+  if (!scopeId || !name) return send(res, 400, { error: 'scope: { id, name } is required' });
+  if (!account) return send(res, 400, { error: 'account is required' });
+  if (!Number.isInteger(count) || count < 1 || count > 20) return send(res, 400, { error: 'count must be 1 to 20' });
+  if (!Number.isInteger(days) || days < 1 || days > 30) return send(res, 400, { error: 'validDays must be 1 to 30' });
+  if (!state.linked.has(user)) return send(res, 404, { error: 'no_linked_device' });
+  const key = `${user}\n${scopeId}`;
+  const row = state.devicePacks.get(key) || { nextIndex: 1, epoch: '0123456789abcdef', revoked: false, used: [] };
+  if (row.revoked) return send(res, 409, { error: 'scope_revoked' });
+  const first = row.nextIndex;
+  row.nextIndex += count;
+  state.devicePacks.set(key, row);
+  const slots = [];
+  for (let index = first; index < first + count; index++) {
+    const salt = crypto.randomBytes(16);
+    const digest = crypto.pbkdf2Sync(devicePackCode(index), Buffer.concat([salt, Buffer.from(`:${index}`)]), 1000, 16, 'sha256');
+    slots.push({ index, salt: salt.toString('base64'), digest: digest.toString('base64'), qr: `TQ4:SLOT${index}`, qrTerminal: '█▀▀█\n█▄▄█' });
+  }
+  send(res, 200, {
+    scope: { id: scopeId, name, epoch: row.epoch }, account,
+    validUntil: new Date(Date.now() + days * 86400000).toISOString(), codeLength: 10,
+    kdf: { name: 'pbkdf2-sha256', iterations: 1000, length: 16 }, slots,
+  });
+});
+route('POST', '/offline/device-packs/revoke', (req, res, b) => {
+  const wanted = deviceScopeOf(b.scopeId !== undefined ? b.scopeId : b.scope && b.scope.id);
+  if (!wanted) return send(res, 400, { error: 'scopeId is required' });
+  const only = b.externalUsername === undefined ? null : deviceUserOf(b.externalUsername);
+  if (b.externalUsername !== undefined && !only) return send(res, 400, { error: 'externalUsername must be a user name' });
+  let revoked = 0;
+  for (const [key, row] of state.devicePacks) {
+    const [user, scopeId] = key.split('\n');
+    if (scopeId === wanted && (!only || user === only) && !row.revoked) { row.revoked = true; revoked++; }
+  }
+  send(res, 200, { revoked });
+});
+route('POST', '/offline/device-packs/report', (req, res, b) => {
+  const scopeId = deviceScopeOf(b.scopeId !== undefined ? b.scopeId : b.scope && b.scope.id);
+  const user = deviceUserOf(b.externalUsername);
+  if (!scopeId || !user) return send(res, 400, { error: 'scopeId and externalUsername are required' });
+  if (!Array.isArray(b.used) || !b.used.length || b.used.length > 100) return send(res, 400, { error: 'used: 1 to 100 slots' });
+  const row = state.devicePacks.get(`${user}\n${scopeId}`);
+  if (!row) return send(res, 404, { error: 'unknown_scope' });
+  const now = Date.now();
+  const seen = new Set();
+  const used = b.used.filter((u) => {
+    const at = u && typeof u.at === 'string' ? Date.parse(u.at) : NaN;
+    const ok = u && Number.isInteger(u.index) && u.index >= 1 && u.index < row.nextIndex && !seen.has(u.index)
+      && Number.isFinite(at) && at <= now + 5 * 60000 && at >= now - 60 * 86400000;
+    if (ok) seen.add(u.index);
+    return ok;
+  });
+  row.used.push(...used);
+  send(res, 200, { recorded: used.length, ignored: b.used.length - used.length });
+});
 route('POST', '/offline/totp/verify', (req, res, b) => {
   if (b.requestId && (state.requests.find((x) => x.id === b.requestId) || {}).status === 'REJECTED') return send(res, 410, { approved: false, reason: 'request_rejected' });
   if (b.requestId && (state.requests.find((x) => x.id === b.requestId) || {}).requiresPasskey) return send(res, 403, { approved: false, reason: 'passkey_required' });
   if (b.code !== '123456') return send(res, 401, { approved: false, reason: 'invalid_code' });
   send(res, 200, { approved: true, externalUsername: b.externalUsername });
 });
-// Outage verifiers: every linked user's code is K7P2QXA at every step (both labels), hashed like the API.
+// Outage verifiers: every linked user's outage code is K7P2QXA at every step, one digest a step,
+// hashed like the API (a cheaper KDF). The scope is required, as in the API.
 route('POST', '/offline/totp/verifiers', (req, res, b) => {
   if (state.opts.outageVerifiersDisabled) return send(res, 403, { error: 'outage_verifiers_disabled' });
   const names = Array.isArray(b.externalUsernames) ? b.externalUsernames : [];
   if (!names.length || names.length > 1000) return send(res, 400, { error: 'externalUsernames: 1 to 1000 user names' });
+  const scopeId = b.scope && typeof b.scope.id === 'string' ? b.scope.id.trim().toLowerCase() : '';
+  const scopeName = b.scope && typeof b.scope.name === 'string' ? b.scope.name.trim().slice(0, 80) : '';
+  if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(scopeId) || !scopeName) return send(res, 400, { error: 'scope_required' });
   const now = Math.floor(Date.now() / 30000);
   const fromStep = Number.isInteger(b.fromStep) ? b.fromStep : now;
   const steps = Number.isInteger(b.steps) ? b.steps : 480;
   const users = names.filter((u) => state.linked.has(u)).map((u) => {
     const salt = crypto.randomBytes(16);
     const parts = [];
-    for (let i = 0; i < steps; i++) {
-      const h = crypto.pbkdf2Sync('K7P2QXA', Buffer.concat([salt, Buffer.from(`:${fromStep + i}`)]), 10, 4, 'sha256');
-      parts.push(h, h);
-    }
+    for (let i = 0; i < steps; i++) parts.push(crypto.pbkdf2Sync('K7P2QXA', Buffer.concat([salt, Buffer.from(`:${fromStep + i}`)]), 10, 6, 'sha256'));
     return { externalUsername: u, fromStep, salt: salt.toString('base64'), digests: Buffer.concat(parts).toString('base64') };
   });
-  send(res, 200, { stepSeconds: 30, fromStep, steps, notAfterStep: fromStep + steps - 1, kdf: { name: 'pbkdf2-sha256', iterations: 10, length: 4 }, users });
+  send(res, 200, {
+    stepSeconds: 30, fromStep, steps, notAfterStep: fromStep + steps - 1, scope: { id: scopeId, name: scopeName },
+    digestsPerStep: 1, kdf: { name: 'pbkdf2-sha256', iterations: 10, length: 6 }, users,
+  });
 });
 // Like the API: a user with a linked phone needs an approved PASSKEY_ENROLL first, used once.
 route('POST', '/webauthn/register/options', (req, res, b) => {

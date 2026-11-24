@@ -10,10 +10,25 @@ import (
 	"time"
 )
 
+// OfflineOutageScope is what outage codes are for: one organization, or your
+// own outage server(s). Each scope has its own codes, so digests fetched for
+// one scope are worthless for any other, and VerifyTotp never accepts an
+// outage code.
+type OfflineOutageScope struct {
+	// ID: 1-64 characters of a-z, 0-9, ".", "_", "-" (compared in lower case). Keep it stable.
+	ID string `json:"id"`
+	// Name: 1-80 characters, shown on the user's phone under the normal
+	// time-based code: "<name>: code for when Touchque can't be reached".
+	Name string `json:"name"`
+}
+
 // OfflineTotpVerifiersOptions holds the POST /offline/totp/verifiers fields.
 type OfflineTotpVerifiersOptions struct {
 	// ExternalUsernames: up to 1,000 users; users x steps at most 24,000 a call.
 	ExternalUsernames []string
+	// Scope is required: the organization or server these codes are for. The
+	// user's phone shows this scope's code once a call has named it for them.
+	Scope OfflineOutageScope
 	// FromStep: the first 30-second step (0: the current one).
 	FromStep int64
 	// Steps: how many, 1-480 (0: 480, four hours).
@@ -23,12 +38,12 @@ type OfflineTotpVerifiersOptions struct {
 // OfflineTotpVerifierUser is one user's digests.
 type OfflineTotpVerifierUser struct {
 	ExternalUsername string `json:"externalUsername"`
-	// FromStep: this user's first step (later than asked when earlier steps were used).
+	// FromStep: this user's first step.
 	FromStep int64 `json:"fromStep"`
 	// Salt: base64, 16 bytes.
 	Salt string `json:"salt"`
-	// Digests: base64, KDF.Length bytes per digest, two per step from FromStep
-	// (the anchored and the unanchored code).
+	// Digests: base64, KDF.Length bytes per digest, DigestsPerStep digests per
+	// step from FromStep.
 	Digests string `json:"digests"`
 }
 
@@ -38,22 +53,32 @@ type OfflineTotpVerifiers struct {
 	FromStep     int64 `json:"fromStep"`
 	Steps        int   `json:"steps"`
 	NotAfterStep int64 `json:"notAfterStep"`
-	KDF          struct {
+	// Scope is the scope as Touchque stored it (id in lower case, name cleaned).
+	Scope *OfflineOutageScope `json:"scope,omitempty"`
+	// DigestsPerStep: 1, the scope's outage code (answers without it, 0 here, had 2).
+	DigestsPerStep int `json:"digestsPerStep"`
+	KDF            struct {
 		Name       string `json:"name"`
 		Iterations int    `json:"iterations"`
 		Length     int    `json:"length"`
 	} `json:"kdf"`
-	// Users: only those who can use time-based codes now.
+	// Users: only those who can use time-based codes now and whose phone shows this scope.
 	Users []OfflineTotpVerifierUser `json:"users"`
 }
 
-// TotpVerifiers is for checking typed time-based codes while your server
-// cannot reach Touchque (an outage): salted, slow digests of each user's next
-// codes, never a key. Check a typed code with MatchTotpVerifier. Requires the
-// workspace policies offlineTotpEnabled and outageVerifiersEnabled. Fetch
-// again every few minutes: removed and frozen users fall out.
+// TotpVerifiers is for checking typed codes while your server cannot reach
+// Touchque (an outage): salted, slow digests of each user's next OUTAGE codes
+// for one scope, never a key. Outage codes are not the normal time-based code:
+// each scope (an organization, or your own outage server) has its own, the
+// user's phone shows them under the normal code ("<name>: code for when
+// Touchque can't be reached") once a call has named the scope for the user,
+// and VerifyTotp never accepts them. Check a typed code with
+// MatchTotpVerifier. Requires the workspace policies offlineTotpEnabled and
+// outageVerifiersEnabled. Fetch again every few minutes from the step you
+// have: removed and frozen users fall out. Quotas are per scope (429
+// scope_quota_exceeded) and per workspace.
 func (o *OfflineResource) TotpVerifiers(opts OfflineTotpVerifiersOptions) (*OfflineTotpVerifiers, error) {
-	body := map[string]interface{}{"externalUsernames": opts.ExternalUsernames}
+	body := map[string]interface{}{"externalUsernames": opts.ExternalUsernames, "scope": opts.Scope}
 	if opts.FromStep > 0 {
 		body["fromStep"] = opts.FromStep
 	}
@@ -90,7 +115,7 @@ func MatchTotpVerifier(v *OfflineTotpVerifiers, user *OfflineTotpVerifierUser, c
 	if err != nil || v.KDF.Length <= 0 {
 		return 0, false
 	}
-	return matchDigests(digests, salt, user.FromStep, v.NotAfterStep, v.KDF.Iterations, v.KDF.Length, given, at.Unix()/v.StepSeconds)
+	return matchDigests(digests, salt, user.FromStep, v.NotAfterStep, v.KDF.Iterations, v.KDF.Length, v.DigestsPerStep, given, at.Unix()/v.StepSeconds)
 }
 
 // normalizeOfflineCode upper-cases a typed code and drops spaces and dashes;
@@ -108,14 +133,19 @@ func normalizeOfflineCode(code string) (string, bool) {
 	return given, true
 }
 
-// matchDigests is MatchTotpVerifier on decoded values (given: a normalized code; now: the current step).
-func matchDigests(digests, salt []byte, fromStep, notAfterStep int64, iterations, length int, given string, now int64) (int64, bool) {
+// matchDigests is MatchTotpVerifier on decoded values (given: a normalized
+// code; now: the current step; perStep: digests per step, 0 means 2 as in
+// answers that predate DigestsPerStep).
+func matchDigests(digests, salt []byte, fromStep, notAfterStep int64, iterations, length, perStep int, given string, now int64) (int64, bool) {
+	if perStep <= 0 {
+		perStep = 2
+	}
 	for _, step := range []int64{now, now - 1, now + 1} {
 		if step < fromStep || step > notAfterStep {
 			continue
 		}
-		at := int(step-fromStep) * 2 * length
-		if at+2*length > len(digests) {
+		at := int(step-fromStep) * perStep * length
+		if at+perStep*length > len(digests) {
 			continue
 		}
 		s := append(append([]byte{}, salt...), []byte(":"+strconv.FormatInt(step, 10))...)
@@ -123,8 +153,10 @@ func matchDigests(digests, salt []byte, fromStep, notAfterStep int64, iterations
 		if err != nil {
 			return 0, false
 		}
-		if subtle.ConstantTimeCompare(digests[at:at+length], got) == 1 || subtle.ConstantTimeCompare(digests[at+length:at+2*length], got) == 1 {
-			return step, true
+		for k := 0; k < perStep; k++ {
+			if subtle.ConstantTimeCompare(digests[at+k*length:at+(k+1)*length], got) == 1 {
+				return step, true
+			}
 		}
 	}
 	return 0, false

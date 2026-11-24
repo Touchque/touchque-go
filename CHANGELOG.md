@@ -7,6 +7,20 @@ Go modules are versioned via git tags (e.g. `touchque-go/v1.1.0`), not a
 manifest field — the version below corresponds to the tag this SDK should
 be released under next.
 
+## [6.0.0] — 2026-11-24
+
+### Breaking
+- **Module path of the public mirror: `github.com/Touchque/touchque-go/v5` → `github.com/Touchque/touchque-go/v6`**; imports become `github.com/Touchque/touchque-go/v6/touchque`. The package is still `touchque`.
+- **Outage codes are bound to one scope (Touchque API, 2026-11-11).** `OfflineTotpVerifiersOptions` has a required `Scope OfflineOutageScope` (`ID`, `Name`): the organization or your own outage server the codes are for. Touchque now returns digests of that scope's own outage codes, never of the normal time-based code, so a list fetched for one scope is worthless for any other scope and `VerifyTotp` never accepts its codes. The user's phone shows the scope's code under the normal time-based code ("<name>: code for when Touchque can't be reached") once a call has named the scope for them; tell your users to type that code during an outage. `OfflineTotpVerifiers` carries `Scope` and `DigestsPerStep` (1: one digest a step, PBKDF2-SHA256 2,000 iterations, 6 bytes); `MatchTotpVerifier` reads `DigestsPerStep` (two a step when it is 0). A call without a scope is refused with 400 `scope_required`; quotas are per scope (429 `scope_quota_exceeded`) and per workspace (429 `integration_quota_exceeded`).
+- `RadiusOutageCache` has `DigestsPerStep`; the new `MatchOutageCodeN(..., perStep, ...)` takes it. `MatchOutageCode` keeps its signature and means two digests per step.
+
+### Added
+- **Offline sign-in packs: a device's next offline sign-ins** (a laptop, a kiosk, a field tablet with no network). `Offline.IssueDevicePack(OfflineDevicePackOptions{ExternalUsername, Scope: OfflineDeviceScope{ID, Name}, Account, Count, ValidDays})` (`POST /offline/device-packs`) returns an `OfflineDevicePack`: the slots (`OfflineDeviceSlot`: `Index`, `Salt`, `Digest`, `QR`, a `TQ4:` QR only the person's phone opens, `QRTerminal`), the `KDF` (`OfflineDeviceKDF`) and `ValidUntil`; nothing in it can produce a code. `Offline.RevokeDeviceScope(OfflineDeviceRevokeOptions{ScopeID, ExternalUsername, Reason})` stops a lost, stolen or reinstalled device, `Offline.ReportDevicePackUse(OfflineDeviceReportOptions{ScopeID, ExternalUsername, Used: []OfflineDeviceUse{{Index, At}}})` sends the slots used offline once it is back online. `VerifyDeviceCode(kdf, slot, code)` checks a typed 10-character code on the device with no network: PBKDF2-SHA256 over salt || ":" || index, compared in constant time; a malformed code is refused without computing. `NormalizeDeviceCode`, `FormatDeviceCode` (`XXXXX-XXXXX`). Requires the workspace policies `offlineSignEnabled` and `offlineDevicePacksEnabled`. Tested against the shared vectors (`fixtures/offline-device-vectors.json`).
+- Offline challenge: `OfflineChallengeOptions.QRFormat` `"compact"` (a smaller `TQ3:` QR for terminals and small screens: the same challenge and the same 7-character code, without the location block, so put what the phone should show in `Details`) and `IncludeQRTerminal`. `OfflineChallengeResponse.QRFormat` says the format of `QR`, and `QRTerminal` is the QR drawn with Unicode half blocks, ready to print in a terminal.
+
+### Removed
+- Device risk moved to its own SDK, module `github.com/Touchque/touchque-device-risk-go` (breaking: ships as 6.0.0).
+
 ## [5.5.0] — 2026-11-17
 
 ### Added

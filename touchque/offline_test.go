@@ -3,6 +3,7 @@ package touchque
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -72,6 +73,69 @@ func TestOffline_ChallengeLinksThePushAndReturnsTheNumber(t *testing.T) {
 	}
 	if ch.ChallengeCode != "47" {
 		t.Fatalf("expected the number, got %+v", ch)
+	}
+}
+
+func TestOffline_ChallengeAsksForTheCompactQRAndItsTerminalDrawing(t *testing.T) {
+	var seenBody map[string]interface{}
+	client, closeFn := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&seenBody)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"challengeId": "c1", "qr": "TQ3:X", "qrFormat": "compact", "qrDataUrl": nil, "qrTerminal": "█▀█\n▀▀▀"})
+	})
+	defer closeFn()
+
+	ch, err := client.Offline.Challenge(OfflineChallengeOptions{ExternalUsername: "a@b.com", SkipQRImage: true, QRFormat: "compact", IncludeQRTerminal: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if seenBody["qrFormat"] != "compact" || seenBody["includeQrTerminal"] != true || seenBody["includeQrImage"] != false {
+		t.Fatalf("unexpected body: %+v", seenBody)
+	}
+	if ch.QR != "TQ3:X" || ch.QRFormat != "compact" || ch.QRTerminal != "█▀█\n▀▀▀" || ch.QRDataURL != "" {
+		t.Fatalf("unexpected answer: %+v", ch)
+	}
+
+	seenBody = nil // Decode merges into an existing map
+	if _, err := client.Offline.Challenge(OfflineChallengeOptions{ExternalUsername: "a@b.com"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := seenBody["qrFormat"]; ok {
+		t.Fatalf("qrFormat sent without being set: %+v", seenBody)
+	}
+	if _, ok := seenBody["includeQrTerminal"]; ok {
+		t.Fatalf("includeQrTerminal sent without being set: %+v", seenBody)
+	}
+}
+
+func TestOffline_ChallengeCompactQRAgainstTheFakeAPI(t *testing.T) {
+	fake := startFakeAPI(t)
+	defer fake.close()
+	c := fake.client(t)
+
+	ch, err := c.Offline.Challenge(OfflineChallengeOptions{ExternalUsername: "a@b.com", QRFormat: "compact", IncludeQRTerminal: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := callsTo(fake, "/offline/challenge")
+	body := calls[len(calls)-1]["body"].(map[string]interface{})
+	if body["qrFormat"] != "compact" || body["includeQrTerminal"] != true {
+		t.Fatalf("unexpected body: %+v", body)
+	}
+	if !strings.HasPrefix(ch.QR, "TQ3:") || ch.QRFormat != "compact" || !strings.Contains(ch.QRTerminal, "\n") {
+		t.Fatalf("unexpected answer: %+v", ch)
+	}
+
+	std, err := c.Offline.Challenge(OfflineChallengeOptions{ExternalUsername: "a@b.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls = callsTo(fake, "/offline/challenge")
+	body = calls[len(calls)-1]["body"].(map[string]interface{})
+	if _, ok := body["qrFormat"]; ok {
+		t.Fatalf("qrFormat sent without being set: %+v", body)
+	}
+	if !strings.HasPrefix(std.QR, "TQ2.") || std.QRFormat != "standard" || std.QRTerminal != "" {
+		t.Fatalf("unexpected answer: %+v", std)
 	}
 }
 

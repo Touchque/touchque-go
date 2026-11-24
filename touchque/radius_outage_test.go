@@ -88,3 +88,28 @@ func TestRadiusOutageCacheSignedPageCodeAndLog(t *testing.T) {
 		t.Fatalf("outage log: %+v %v %v", res, err, logged)
 	}
 }
+
+func TestMatchOutageCodeN_OneDigestPerStep(t *testing.T) {
+	now := time.Now()
+	step := now.Unix() / 30
+	salt := []byte("0123456789abcdef")
+	var digests []byte
+	for s := step - 1; s <= step+2; s++ {
+		d, _ := pbkdf2.Key(sha256.New, "K7P2QXA", append(append([]byte{}, salt...), []byte(":"+strconv.FormatInt(s, 10))...), 10, 6)
+		digests = append(digests, d...)
+	}
+	sb, db := base64.StdEncoding.EncodeToString(salt), base64.StdEncoding.EncodeToString(digests)
+	got, ok := MatchOutageCodeN(sb, db, step-1, step+2, 10, 6, 1, 30, "k7p-2qxa", now)
+	if !ok || got != step {
+		t.Fatalf("match = %d %v, want %d", got, ok, step)
+	}
+	if _, ok := MatchOutageCodeN(sb, db, step-1, step+2, 10, 6, 1, 30, "K7P2QXB", now); ok {
+		t.Fatal("a wrong code matched")
+	}
+	// A page that carries digestsPerStep: 1 decodes it.
+	raw := []byte(`{"digestsPerStep":1,"kdf":{"name":"pbkdf2-sha256","iterations":10,"length":6}}`)
+	var c RadiusOutageCache
+	if err := json.Unmarshal(raw, &c); err != nil || c.DigestsPerStep != 1 {
+		t.Fatalf("page: %+v %v", c, err)
+	}
+}

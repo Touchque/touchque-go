@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for considering a contribution to `github.com/Touchque/touchque-go/v5`.
+Thanks for considering a contribution to `github.com/Touchque/touchque-go/v6`.
 
 ## Setup
 

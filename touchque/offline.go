@@ -31,17 +31,32 @@ type OfflineChallengeOptions struct {
 	// RequireNumberMatch asks for number matching on a standalone QR (implied
 	// when RequestID points at a push that has one).
 	RequireNumberMatch bool
+	// QRFormat "compact" asks for a smaller QR (QR starts with "TQ3:") for
+	// terminals and small screens: the same challenge and the same
+	// 7-character code, without the location block, so put what the phone
+	// should show in Details. Empty means "standard" (TQ2.…).
+	QRFormat string
+	// IncludeQRTerminal also returns QRTerminal: the QR drawn with Unicode
+	// half blocks, ready to print in a terminal.
+	IncludeQRTerminal bool
 }
 
 // OfflineChallengeResponse is returned by Challenge.
 type OfflineChallengeResponse struct {
 	ChallengeID string `json:"challengeId"`
-	// QR is the raw challenge text (TQ2.… — encrypted for the user's phone);
-	// draw it as a QR code yourself if you don't use QRDataURL.
+	// QR is the raw challenge text (TQ2.…, or TQ3:… for the compact format —
+	// encrypted for the user's phone); draw it as a QR code yourself if you
+	// don't use QRDataURL.
 	QR string `json:"qr"`
+	// QRFormat is the format of QR: "standard" or "compact".
+	QRFormat string `json:"qrFormat,omitempty"`
 	// QRDataURL is `data:image/png;base64,…`, ready for an <img> src; empty
 	// when IncludeQRImage is false.
-	QRDataURL        string `json:"qrDataUrl"`
+	QRDataURL string `json:"qrDataUrl"`
+	// QRTerminal is the QR drawn with Unicode half blocks, lines separated by
+	// "\n", ready to print in a terminal. Only with IncludeQRTerminal (empty
+	// when it could not be drawn).
+	QRTerminal       string `json:"qrTerminal,omitempty"`
 	ExpiresAt        string `json:"expiresAt"`
 	ExpiresInSeconds int    `json:"expiresInSeconds"`
 	// TotpAvailable is true when the workspace allows the time-based code
@@ -80,6 +95,12 @@ func (o *OfflineResource) Challenge(opts OfflineChallengeOptions) (*OfflineChall
 	if opts.RequireNumberMatch {
 		body["requireNumberMatch"] = true
 	}
+	if opts.QRFormat != "" {
+		body["qrFormat"] = opts.QRFormat
+	}
+	if opts.IncludeQRTerminal {
+		body["includeQrTerminal"] = true
+	}
 	res, err := o.http.post("/offline/challenge", body)
 	if err != nil {
 		return nil, err
@@ -91,8 +112,14 @@ func (o *OfflineResource) Challenge(opts OfflineChallengeOptions) (*OfflineChall
 	if v, ok := res["qr"].(string); ok {
 		resp.QR = v
 	}
+	if v, ok := res["qrFormat"].(string); ok {
+		resp.QRFormat = v
+	}
 	if v, ok := res["qrDataUrl"].(string); ok {
 		resp.QRDataURL = v
+	}
+	if v, ok := res["qrTerminal"].(string); ok {
+		resp.QRTerminal = v
 	}
 	if v, ok := res["expiresAt"].(string); ok {
 		resp.ExpiresAt = v

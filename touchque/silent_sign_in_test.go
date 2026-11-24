@@ -97,6 +97,20 @@ func TestRisk_CheckAsksForNoKeyThenANewBrowserAndSendsNothingToThePhone(t *testi
 	}
 }
 
+// The bridge to Touchque Device Risk: the page's identification goes through untouched.
+func TestRiskCheckCarriesTheDeviceRiskIdentification(t *testing.T) {
+	api := startFakeAPI(t)
+	defer api.close()
+	tq := api.client(t)
+	if _, err := tq.Risk.Check(context.Background(), RiskCheckOptions{ExternalUsername: "ayse@acme.com", DeviceRisk: "REPORT", DeviceRiskRequestID: "dre_aaaaaaaaaaaaaaaaaaaaaa"}); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]interface{}{"externalUsername": "ayse@acme.com", "deviceRisk": "REPORT", "deviceRiskRequestId": "dre_aaaaaaaaaaaaaaaaaaaaaa"}
+	if got := api.lastCheck(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected check body:\n got: %v\nwant: %v", got, want)
+	}
+}
+
 func TestRisk_SilentAnswerAndWhatStillAsks(t *testing.T) {
 	proof, _ := silentVectors(t)
 	api := startFakeAPI(t)

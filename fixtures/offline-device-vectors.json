@@ -1,0 +1,97 @@
+{
+  "description": "Touchque offline sign-in packs shared test vectors (TEST-ONLY keys): device codes, the slot QR (TQ4) and the slot digest.",
+  "keys": "deviceKey, deviceSecret and the account are those of offline-sign-vectors.json (expectedKHex there).",
+  "deviceSecret": "9f2c6d1e4b7a83c05d19e6f2a4b8c7d3e1f0a5b6c9d2e4f7a1b3c5d7e9f0a2b4",
+  "account": {
+    "iid": "11111111-2222-4333-8444-555555555555",
+    "usr": "Jane@DemoBank.example"
+  },
+  "expectedQrKeyHex": "e17a5d474ba96f2bdccc5d696270a2a8526c43e9d1b565244ebe0d71db29e7e6",
+  "expectedKHex": "9293131d3952b7aad6a19ec0495db1d7f2ef5e0f415cf619292969ae5c41e023",
+  "label": "touchque-device-offline:v1",
+  "codeLength": 10,
+  "codes": [
+    {
+      "fields": {
+        "iid": "11111111-2222-4333-8444-555555555555",
+        "usr": "Jane@DemoBank.example",
+        "scopeId": "pc-0f1e2d3c4b5a6978",
+        "epoch": "0123456789abcdef",
+        "index": 1
+      },
+      "expectedMessage": "touchque-device-offline:v1\n11111111-2222-4333-8444-555555555555\njane@demobank.example\npc-0f1e2d3c4b5a6978\n0123456789abcdef\n1",
+      "expectedCode": "PDG4MSATZB"
+    },
+    {
+      "fields": {
+        "iid": "11111111-2222-4333-8444-555555555555",
+        "usr": "Jane@DemoBank.example",
+        "scopeId": "pc-0f1e2d3c4b5a6978",
+        "epoch": "0123456789abcdef",
+        "index": 2
+      },
+      "expectedMessage": "touchque-device-offline:v1\n11111111-2222-4333-8444-555555555555\njane@demobank.example\npc-0f1e2d3c4b5a6978\n0123456789abcdef\n2",
+      "expectedCode": "V2N2J4HLTM"
+    },
+    {
+      "fields": {
+        "iid": "11111111-2222-4333-8444-555555555555",
+        "usr": "Jane@DemoBank.example",
+        "scopeId": "pc-0f1e2d3c4b5a6978",
+        "epoch": "0123456789abcdef",
+        "index": 4294967295
+      },
+      "expectedMessage": "touchque-device-offline:v1\n11111111-2222-4333-8444-555555555555\njane@demobank.example\npc-0f1e2d3c4b5a6978\n0123456789abcdef\n4294967295",
+      "expectedCode": "JU2NGBFBJ8"
+    }
+  ],
+  "slotQr": {
+    "qr": "TQ4:YD04E6IQU$$UB4VUFV4RV7 V  F48J%3QDNTHETIMDBZJ$8SPV35FM1-4:LD1RDJVIZCP*J6ZZR:B0G6EA19J4L.XVGUR*2P383NZ6-PIHJVD*PVLG-BF5IO8%GW1AH T50G$M78RE059*UGI%A*D8H108LPC4",
+    "expectedBody": {
+      "kid": "k1",
+      "scopeId": "pc-0f1e2d3c4b5a6978",
+      "epoch": "0123456789abcdef",
+      "name": "LAPTOP-OZCAN",
+      "account": "ORNEK\\jane",
+      "index": 7,
+      "last": 16,
+      "validUntil": 1790000000
+    },
+    "expectedCode": "5KMY9TPZAQ",
+    "expectedFormatted": "5KMY9-TPZAQ",
+    "qrTerminal": "█████████████████████████████████████████████\n██ ▄▄▄▄▄ ██▄ ▄▀▄▄▀▄▄▀█▀▄▄█▀█▄▄  ▄ ██ ▄▄▄▄▄ ██\n██ █   █ █▀▄▄▄██   █▀█▀▄▄██▀██▀▀  ▀█ █   █ ██\n██ █▄▄▄█ █▄█▀███▄ ▄█▀▀▄ ▄█▀ ▄█▀ ██▄█ █▄▄▄█ ██\n██▄▄▄▄▄▄▄█▄█ ▀▄█▄▀ ▀▄▀ ▀▄▀ ▀ ▀ █ █▄█▄▄▄▄▄▄▄██\n██▄ ██▀▄▄▄▀ █▄▄▀▀▀▀▀▄ █▀█▄ ▄▀▄█ █ ▄█▀▀ ▄▀█▀██\n██▄ ▄██▀▄█ █▀█▄ ▄█  ▀█▄▀ █▀▄▀▄▄█▄█ ▀▀ █▄▀▀ ██\n██▄ █ █▀▄█▄▄▄█▀▄█▄█ ▀██ █▄▄█ ▄█▀█▀ ▄▄▄▀ ▄▄▄██\n██▀ █  ▄▄ ▀███▀▀█▄ ▀▀█ ▄█▀██▄▀█▀▄█▀▀▄▄█▀█▀ ██\n████▀█▀▄▄█▀  █▄▄▀  █ ▀▄▄█  ▄▄ ▀ ▀   ▄██▄▄▄▀██\n██▀ ▀▄▄█▄ ▀ █ █▄ ▀ ▄▄█ ▄▄▄▀▄█▀▀▄    █▀ ▀ ▄ ██\n██▀█ ██▄▄▀  ▄█▄████▀▄██▀▀▄ ▀▀▄▀█ ▀▀▄▀▄█▀▀▀███\n██▀█▄█▄█▄ ▀ ▀ ▄▄▀▀▀█▀ ▀▀██▄  ███▄ █▀  ▄█▄ ▀██\n██▄█ █ ▄▄██ ▄▀█ ▀██▀▀█▄▄█▄ █▄ ▄▄█▄▄  █▄▄█▄ ██\n██▀▄▄██▄▄▄█  █▀  █▄ ▀▄█ █▀▀ ▀  ▄▄▄▀▄ █▄█▀█ ██\n██▀█▄▄ █▄▀  ▄█▀▀▄▄▄▀▀███▄██▀▀▄█▄███▀ ▀█▀  ███\n██ ▄▄▀█▄▄█▀▀ ▄▀█ ▄█▀▄▄▄▀ █▄▄▀▀▀▀▄ ▄ ▀ ▄▀ ▀▄██\n██▄█▄█▄▄▄█▀▄▄▀▀▄▄ ▄▄▄█▀▄▀▄▄▀▀ ██▄  ▄▄▄ █ ▄███\n██ ▄▄▄▄▄ █ ▀▀ ██▀ ██▄▀ ▄  █ ▀▄ ▄▀▄ █▄█ ▀▄█▀██\n██ █   █ ███▄▄▄  █  ▄█▄█▄   ██ ▄▀█ ▄▄▄▄█▀▀███\n██ █▄▄▄█ █▀▀  ▄▄█▀██▄▀▀ █  ██   █▀█▄ ▄  █████\n██▄▄▄▄▄▄▄█▄█▄▄█▄▄██▄▄█▄▄▄▄█▄█▄▄▄▄▄█▄█▄███▄███\n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    "tamperedQr": "TQ4:YD04E6IQU$$UB4VUFV4RV7 V  A48J%3QDNTHETIMDBZJ$8SPV35FM1-4:LD1RDJVIZCP*J6ZZR:B0G6EA19J4L.XVGUR*2P383NZ6-PIHJVD*PVLG-BF5IO8%GW1AH T50G$M78RE059*UGI%A*D8H108LPC4"
+  },
+  "digest": {
+    "code": "5KMY9TPZAQ",
+    "index": 7,
+    "saltHex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+    "kdf": {
+      "name": "pbkdf2-sha256",
+      "iterations": 600000,
+      "length": 16
+    },
+    "expectedDigestHex": "f8187025b8638ebf008a7bd9e64d735e",
+    "note": "PBKDF2-SHA256(password = the 10 ASCII characters, salt = salt || \":\" || index in decimal, 600000 iterations, 16 bytes)."
+  },
+  "normalize": [
+    {
+      "input": "5kmy9-TPZAQ",
+      "expected": "5KMY9TPZAQ"
+    },
+    {
+      "input": "5KMY9TPZA",
+      "expected": null
+    },
+    {
+      "input": "ABCDEFGHI0",
+      "expected": null
+    }
+  ],
+  "format": [
+    "Code: HMAC-SHA256(K, \"touchque-device-offline:v1\\n<integration id>\\n<lower-cased user name>\\n<scope id>\\n<epoch>\\n<index in decimal>\"), the first 50 bits as 10 characters of the offline alphabet (5 bits each, most significant first, exactly as the 7-character offline code), shown as XXXXX-XXXXX.",
+    "Slot QR: \"TQ4:\" + base45(kidLen(1) || kid (ASCII) || iv(12) || ciphertext || tag(16)); AES-256-GCM under the account QR key (the same key as TQ2/TQ3), associated data \"TQ4|<kid>\".",
+    "Body, big-endian: u8 version (4); u8 scope id length + ASCII scope id; text computer name; text account; u8 epoch length + ASCII epoch (16 hex); u32 index; u32 last (the last index of this pack); u32 validUntil (unix seconds). text = u8 byte length + UTF-8. No trailing bytes.",
+    "The phone shows the computer, the account and the slot, asks Face ID, derives K and shows the code. With no QR it computes the same code from a computer in GET /device/offline-computers (scope id, epoch) and the slot number typed in. It refuses a computer that list marks revoked."
+  ]
+}

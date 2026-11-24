@@ -12,7 +12,7 @@ import (
 )
 
 // What a RADIUS proxy keeps for a Touchque outage: everyone who may use the
-// VPN now, with salted, slow digests of their next ~4 hours of codes from the
+// VPN now, with salted, slow digests of their next ~4 hours of outage codes from the
 // Touchque app (never a key), so a code typed on the VPN can be checked while
 // Touchque cannot be reached. Touchque SSO signs every page with the app's
 // proxy secret; check it with OpenOutagePage before using a page.
@@ -43,7 +43,7 @@ type RadiusOutageUser struct {
 	Email    string `json:"email"`
 	FromStep int64  `json:"fromStep"`
 	Salt     string `json:"salt"`
-	// Digests: base64, KDF.Length bytes each, two per step from FromStep.
+	// Digests: base64, KDF.Length bytes each, DigestsPerStep per step from FromStep.
 	Digests string `json:"digests"`
 }
 
@@ -65,6 +65,9 @@ type RadiusOutageCache struct {
 		Iterations int    `json:"iterations"`
 		Length     int    `json:"length"`
 	} `json:"kdf"`
+	// DigestsPerStep: digests per step in every user's Digests (1: the
+	// organization's outage code; 0 in a page that predates it means 2).
+	DigestsPerStep int `json:"digestsPerStep,omitempty"`
 	// Members: on the first page only (nil on the others), everyone who may
 	// sign in now. Drop anyone else at once.
 	Members []string           `json:"members"`
@@ -122,8 +125,15 @@ func OpenOutagePage(secret string, p *RadiusOutagePage) (*RadiusOutageCache, err
 // digests as base64, as RadiusOutageUser has them), at the current step or
 // one either side and never after until. It returns the step it belongs to.
 // Accept each step once: refuse codes for a step at or before the last one
-// accepted for the person.
+// accepted for the person. It reads two digests per step, as pages did before
+// DigestsPerStep; use MatchOutageCodeN with the page's DigestsPerStep.
 func MatchOutageCode(salt, digests string, fromStep, until int64, iterations, length int, stepSeconds int64, code string, at time.Time) (int64, bool) {
+	return MatchOutageCodeN(salt, digests, fromStep, until, iterations, length, 2, stepSeconds, code, at)
+}
+
+// MatchOutageCodeN is MatchOutageCode for a run with perStep digests per step
+// (the page's DigestsPerStep; 0 means 2).
+func MatchOutageCodeN(salt, digests string, fromStep, until int64, iterations, length, perStep int, stepSeconds int64, code string, at time.Time) (int64, bool) {
 	given, ok := normalizeOfflineCode(code)
 	if !ok || stepSeconds <= 0 || length <= 0 {
 		return 0, false
@@ -136,7 +146,7 @@ func MatchOutageCode(salt, digests string, fromStep, until int64, iterations, le
 	if err != nil {
 		return 0, false
 	}
-	return matchDigests(d, s, fromStep, until, iterations, length, given, at.Unix()/stepSeconds)
+	return matchDigests(d, s, fromStep, until, iterations, length, perStep, given, at.Unix()/stepSeconds)
 }
 
 // RadiusOutageEvent is one decision the proxy made while Touchque could not

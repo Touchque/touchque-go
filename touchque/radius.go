@@ -86,6 +86,96 @@ type RadiusApp struct {
 	UsernameDomain string `json:"usernameDomain,omitempty"`
 	// Organization is the organization's display name.
 	Organization string `json:"organization"`
+	// OfflinePacks: a Windows sign-in app's offline sign-in packs (nil: off).
+	// After an approved sign-in on a computer's own screen, the connector asks
+	// for the next Size offline sign-ins there, valid Days (OfflinePack).
+	OfflinePacks *RadiusOfflinePacks `json:"offlinePacks,omitempty"`
+}
+
+// RadiusOfflinePacks is how many offline sign-ins a computer keeps and for how long.
+type RadiusOfflinePacks struct {
+	Size int `json:"size"`
+	Days int `json:"days"`
+}
+
+// RadiusOfflinePackRequest asks for a computer's offline sign-ins right after
+// an approved Windows sign-in there.
+type RadiusOfflinePackRequest struct {
+	// TransactionID is the accepted sign-in's transaction.
+	TransactionID string `json:"transactionId"`
+	// MachineID is the computer's id (16-32 hex characters, kept by the connector).
+	MachineID string `json:"machineId"`
+	Computer  string `json:"computer"`
+	// Account is the Windows account the person signed in to.
+	Account string `json:"account"`
+	// Have is how many unused slots the computer still holds for the account.
+	Have int `json:"have"`
+}
+
+// RadiusOfflineSlot is one offline sign-in: the slow digest of its
+// 10-character code and the QR only the person's phone opens.
+type RadiusOfflineSlot struct {
+	Index      int    `json:"index"`
+	Salt       string `json:"salt"`
+	Digest     string `json:"digest"`
+	QR         string `json:"qr"`
+	QRTerminal string `json:"qrTerminal"`
+}
+
+// RadiusOfflineKDF is how the slot digests were made (PBKDF2-SHA256).
+type RadiusOfflineKDF struct {
+	Name       string `json:"name"`
+	Iterations int    `json:"iterations"`
+	Length     int    `json:"length"`
+}
+
+// RadiusOfflinePack is a computer's new offline sign-ins for a person (no
+// slots, and Reason, when none were due or allowed).
+type RadiusOfflinePack struct {
+	Email   string `json:"email"`
+	Account string `json:"account"`
+	Scope   struct {
+		ID    string `json:"id"`
+		Name  string `json:"name"`
+		Epoch string `json:"epoch"`
+	} `json:"scope"`
+	ValidUntil time.Time           `json:"validUntil"`
+	CodeLength int                 `json:"codeLength"`
+	KDF        RadiusOfflineKDF    `json:"kdf"`
+	Slots      []RadiusOfflineSlot `json:"slots"`
+	Reason     string              `json:"reason,omitempty"`
+}
+
+// RadiusOfflineUse is a slot the computer accepted while it had no network.
+type RadiusOfflineUse struct {
+	Index   int       `json:"index"`
+	At      time.Time `json:"at"`
+	Session string    `json:"session,omitempty"`
+}
+
+// RadiusOfflinePackState is one person's pack on the computer, for OfflinePackSync.
+type RadiusOfflinePackState struct {
+	Email   string             `json:"email"`
+	Account string             `json:"account"`
+	Used    []RadiusOfflineUse `json:"used,omitempty"`
+}
+
+// RadiusOfflineSyncRequest is what the computer holds and used.
+type RadiusOfflineSyncRequest struct {
+	MachineID string                   `json:"machineId"`
+	Computer  string                   `json:"computer"`
+	Packs     []RadiusOfflinePackState `json:"packs"`
+}
+
+// RadiusOfflineSyncResult says which packs the computer keeps ("keep") or
+// drops ("delete"), and whether the computer was revoked.
+type RadiusOfflineSyncResult struct {
+	Revoked bool `json:"revoked"`
+	Packs   []struct {
+		Email  string `json:"email"`
+		Action string `json:"action"`
+		Reason string `json:"reason,omitempty"`
+	} `json:"packs"`
 }
 
 // RadiusNAS is the VPN device that sent the RADIUS request.
@@ -123,16 +213,23 @@ type RadiusAuthRequest struct {
 	Passcode string `json:"passcode,omitempty"`
 	// ChallengeCapable false: this VPN device cannot show an Access-Challenge,
 	// so it gets a plain push whatever the app's Challenge setting (nil: it can).
-	ChallengeCapable *bool         `json:"challengeCapable,omitempty"`
-	NAS              RadiusNAS     `json:"nas"`
-	Client           RadiusEndUser `json:"client"`
+	ChallengeCapable *bool `json:"challengeCapable,omitempty"`
+	// TerminalQR: the client draws a QR in a terminal (the Touchque PAM module
+	// on a Linux server). Touchque then also returns QR and QRTerminal: a
+	// compact QR for a phone without internet, whose 7-character code goes to
+	// Passcode like a time-based code. Only for apps with vendor "linux".
+	TerminalQR bool          `json:"terminalQr,omitempty"`
+	NAS        RadiusNAS     `json:"nas"`
+	Client     RadiusEndUser `json:"client"`
 }
 
 // RadiusDecision is the answer to every RADIUS API call.
 type RadiusDecision struct {
 	// Decision: "accept", "reject", "challenge" (show Number and ask the user
-	// to press OK; continue with Wait or Passcode) or "pending" (a push was
-	// sent; continue with Wait).
+	// to press OK; continue with Wait or Passcode), "pending" (a push was
+	// sent; continue with Wait) or, only for a sign-in started with
+	// TerminalQR, "retry" (the code was wrong: ask again and continue the
+	// same transaction with Passcode or Wait).
 	Decision      string `json:"decision"`
 	TransactionID string `json:"transactionId,omitempty"`
 	// Number is the number the user types on the phone (Decision "challenge").
@@ -148,6 +245,15 @@ type RadiusDecision struct {
 	Email string `json:"email,omitempty"`
 	// ExpiresIn is how many seconds the transaction stays open.
 	ExpiresIn int `json:"expiresIn,omitempty"`
+	// QR is the compact QR text ("TQ3:...") for a phone without internet,
+	// returned with "challenge" or "pending" when the sign-in asked for
+	// TerminalQR and the person's phone can do offline approvals.
+	QR string `json:"qr,omitempty"`
+	// QRTerminal is QR drawn with Unicode half blocks, lines separated by
+	// "\n": print it as it is.
+	QRTerminal string `json:"qrTerminal,omitempty"`
+	// AttemptsLeft: how many more codes the transaction takes ("retry").
+	AttemptsLeft int `json:"attemptsLeft,omitempty"`
 }
 
 // Config fetches the app's settings (and tells Touchque the proxy is up).
@@ -189,6 +295,25 @@ func (r *RadiusClient) Passcode(ctx context.Context, transactionID, passcode str
 	body := map[string]string{"passcode": passcode}
 	var out RadiusDecision
 	if err := r.call(ctx, "/sso/radius/v1/transactions/"+url.PathEscape(transactionID)+"/passcode", body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// OfflinePack asks for a computer's offline sign-ins after an approved Windows
+// sign-in there (a Windows sign-in app with OfflinePacks).
+func (r *RadiusClient) OfflinePack(ctx context.Context, req RadiusOfflinePackRequest) (*RadiusOfflinePack, error) {
+	var out RadiusOfflinePack
+	if err := r.call(ctx, "/sso/radius/v1/offline-packs", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// OfflinePackSync sends the slots used offline and learns which packs the computer keeps.
+func (r *RadiusClient) OfflinePackSync(ctx context.Context, req RadiusOfflineSyncRequest) (*RadiusOfflineSyncResult, error) {
+	var out RadiusOfflineSyncResult
+	if err := r.call(ctx, "/sso/radius/v1/offline-packs/sync", req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

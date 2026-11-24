@@ -36,10 +36,12 @@ type RiskCheckOptions struct {
 	// ClientSignals is the end user's page check from @touchque/web
 	// (startClientSignals().encode()): software driving the browser is never silent.
 	ClientSignals string
-	// DeviceRisk is the page's device report from @touchque/web
-	// (deviceRisk.collect({ purpose: 'sign_in' })): a device signal is never silent.
+	// DeviceRisk is the Touchque Device Risk identification (from the Device
+	// Risk SDK's tag or identify call); optional: the page's report, passed
+	// through untouched. A device signal is never silent.
 	DeviceRisk string
-	// DeviceRiskRequestID: the page's identification (deviceRisk.identify()), preferred over DeviceRisk.
+	// DeviceRiskRequestID: the Touchque Device Risk identification's requestId
+	// (from the Device Risk SDK's tag or identify call); optional, preferred over DeviceRisk.
 	DeviceRiskRequestID string
 	// MaxAgeSeconds is your own limit on how long ago the last phone approval
 	// in this browser may be, in seconds; 0 = always ask. nil leaves it to

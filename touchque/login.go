@@ -58,12 +58,13 @@ type LoginRequestOptions struct {
 	// driven by software asks with number matching, or is refused where the
 	// workspace blocks it (403 automated_client).
 	ClientSignals string
-	// DeviceRisk: the page's device report from @touchque/web
-	// (deviceRisk.collect({ purpose })), passed through untouched. Used only
-	// when your workspace turned Device risk on: its signals only ever ask
-	// for more, and a device your admin marked "step up always" asks at once.
+	// DeviceRisk: the Touchque Device Risk identification (from the Device
+	// Risk SDK's tag or identify call); optional: the page's report, passed
+	// through untouched. Its signals only ever ask for more, and a device your
+	// admin marked "step up always" asks at once.
 	DeviceRisk string
-	// DeviceRiskRequestID: the page's identification (deviceRisk.identify()), preferred over DeviceRisk.
+	// DeviceRiskRequestID: the Touchque Device Risk identification's requestId
+	// (from the Device Risk SDK's tag or identify call); optional, preferred over DeviceRisk.
 	DeviceRiskRequestID string
 	// Details: transaction context for the approval screen. At most 8
 	// entries, labels <= 40 and values <= 120 characters; the API rejects

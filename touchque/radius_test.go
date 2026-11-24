@@ -118,3 +118,74 @@ func TestRadiusClientAPIError(t *testing.T) {
 		t.Fatalf("want a 401 APIError, got %v", err)
 	}
 }
+
+func TestRadiusClientTerminalQR(t *testing.T) {
+	secret := "radius-secret"
+	srv := radiusFake(t, secret, func(path string, body map[string]interface{}) (int, interface{}) {
+		switch path {
+		case "/sso/radius/v1/auth":
+			if body["terminalQr"] != true {
+				t.Errorf("auth body without terminalQr: %v", body)
+			}
+			return 200, map[string]interface{}{"decision": "challenge", "transactionId": "tx1", "number": "47", "qr": "TQ3:ABC", "qrTerminal": "█▀\n▄ ", "expiresIn": 180}
+		case "/sso/radius/v1/transactions/tx1/passcode":
+			return 200, map[string]interface{}{"decision": "retry", "transactionId": "tx1", "reason": "bad_passcode", "attemptsLeft": 2}
+		}
+		t.Errorf("unexpected path %s", path)
+		return 404, map[string]interface{}{}
+	})
+	defer srv.Close()
+	rc, err := NewRadiusClient(&Config{APIKey: "tq_rad_x", APISecret: secret, BaseURL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := rc.Authenticate(context.Background(), RadiusAuthRequest{Username: "jdoe", TerminalQR: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.QR != "TQ3:ABC" || d.QRTerminal != "█▀\n▄ " || d.Number != "47" {
+		t.Fatalf("decision: %+v", d)
+	}
+	d, err = rc.Passcode(context.Background(), "tx1", "ABCDEFG")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Decision != "retry" || d.AttemptsLeft != 2 {
+		t.Fatalf("retry: %+v", d)
+	}
+}
+
+func TestRadiusClientOfflinePacks(t *testing.T) {
+	secret := "radius-secret"
+	srv := radiusFake(t, secret, func(path string, body map[string]interface{}) (int, interface{}) {
+		switch path {
+		case "/sso/radius/v1/offline-packs":
+			if body["machineId"] != "0f1e2d3c4b5a6978" || body["have"].(float64) != 3 {
+				t.Errorf("pack body: %v", body)
+			}
+			return 200, map[string]interface{}{"email": "jane@acme.test", "account": `ORNEK\jane`, "scope": map[string]interface{}{"id": "pc-0f1e2d3c4b5a6978", "name": "LAPTOP", "epoch": "0123456789abcdef"},
+				"validUntil": "2026-11-26T10:00:00.000Z", "codeLength": 10, "kdf": map[string]interface{}{"name": "pbkdf2-sha256", "iterations": 600000, "length": 16},
+				"slots": []map[string]interface{}{{"index": 4, "salt": "c2FsdA==", "digest": "ZGlnZXN0", "qr": "TQ4:X", "qrTerminal": "█"}}}
+		case "/sso/radius/v1/offline-packs/sync":
+			return 200, map[string]interface{}{"revoked": false, "packs": []map[string]interface{}{{"email": "jane@acme.test", "action": "keep"}}}
+		}
+		t.Errorf("unexpected path %s", path)
+		return 404, map[string]interface{}{}
+	})
+	defer srv.Close()
+	rc, err := NewRadiusClient(&Config{APIKey: "tq_rad_x", APISecret: secret, BaseURL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := rc.OfflinePack(context.Background(), RadiusOfflinePackRequest{TransactionID: "tx1", MachineID: "0f1e2d3c4b5a6978", Computer: "LAPTOP", Account: `ORNEK\jane`, Have: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Scope.Epoch != "0123456789abcdef" || p.KDF.Iterations != 600000 || len(p.Slots) != 1 || p.Slots[0].Index != 4 || p.ValidUntil.Year() != 2026 {
+		t.Fatalf("pack: %+v", p)
+	}
+	res, err := rc.OfflinePackSync(context.Background(), RadiusOfflineSyncRequest{MachineID: "0f1e2d3c4b5a6978", Packs: []RadiusOfflinePackState{{Email: "jane@acme.test", Used: []RadiusOfflineUse{{Index: 4, At: time.Now()}}}}})
+	if err != nil || res.Revoked || len(res.Packs) != 1 || res.Packs[0].Action != "keep" {
+		t.Fatalf("sync: %+v %v", res, err)
+	}
+}

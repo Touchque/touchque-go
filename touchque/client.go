@@ -34,9 +34,6 @@ type Client struct {
 	// QRPairings pairs a browser by QR code: the phone that scans it is the
 	// one asked to approve.
 	QRPairings *QRPairingsResource
-	// DeviceRisk is Device risk: the device on your sign-up, reset, sign-in
-	// or approval page (a paid add-on).
-	DeviceRisk *DeviceRiskResource
 	// SafeGuard is Safe Guard: Safe transactions approved on the approver's
 	// phone, for TouchqueSafeGuard.
 	SafeGuard *SafeGuardResource
@@ -91,7 +88,6 @@ func newClient(config *Config) *Client {
 		Identity:    newIdentityResource(httpWrapper),
 		Mobile:      newMobileResource(httpWrapper),
 		QRPairings:  newQRPairingsResource(httpWrapper),
-		DeviceRisk:  newDeviceRiskResource(httpWrapper),
 		SafeGuard:   newSafeGuardResource(httpWrapper),
 		apiSecret:   config.APISecret,
 	}

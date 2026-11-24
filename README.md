@@ -4,7 +4,7 @@ The official Go server SDK for [Touchque](https://touchque.com) — biometric pu
 2FA, passkeys, and offline approval codes, added to any `net/http` backend
 with one middleware wrap per route.
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/Touchque/touchque-go/v5.svg)](https://pkg.go.dev/github.com/Touchque/touchque-go/v5)
+[![Go Reference](https://pkg.go.dev/badge/github.com/Touchque/touchque-go/v6.svg)](https://pkg.go.dev/github.com/Touchque/touchque-go/v6)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 📘 Full docs: **[support.touchque.com](https://support.touchque.com)**
@@ -12,7 +12,7 @@ with one middleware wrap per route.
 ## Install
 
 ```bash
-go get github.com/Touchque/touchque-go/v5
+go get github.com/Touchque/touchque-go/v6
 ```
 
 ## Setup
@@ -31,7 +31,7 @@ in code instead; it panics when they are missing or invalid.
 ## Quick start (net/http)
 
 ```go
-import "github.com/Touchque/touchque-go/v5/touchque"
+import "github.com/Touchque/touchque-go/v6/touchque"
 
 tq, err := touchque.New() // TQ_API_KEY, TQ_API_SECRET
 if err != nil {
@@ -365,6 +365,59 @@ sign-in (409 `request_rejected`), a code for a QR already on screen is refused (
 and so is the time-based code (`VerifyTotpFor(..., requestID)`). With number matching, print `ChallengeCode`
 under the QR: the phone shows it among two decoys and the user taps the match; a wrong tap yields a code that
 fails verification.
+
+**A QR for a terminal or a small screen.** `QRFormat: "compact"` returns a smaller QR (`QR` starts with `TQ3:`)
+for the same challenge and the same 7-character code, and `IncludeQRTerminal: true` fills `QRTerminal`: the QR
+drawn with Unicode half blocks, ready to print. The answer's `QRFormat` says which format `QR` is. The compact
+QR carries no location block, so put what the phone should show in `Details`:
+
+```go
+ch, _ := tq.Offline.Challenge(touchque.OfflineChallengeOptions{
+    ExternalUsername: "jane@acme.com", Type: "LOGIN",
+    Details: []touchque.LoginDetail{{Label: "Server", Value: "db-1.acme.internal"}, {Label: "Account", Value: "deploy"}},
+    SkipQRImage: true, QRFormat: "compact", IncludeQRTerminal: true,
+})
+fmt.Println(ch.QRTerminal) // then Verify the code the user types, as above
+```
+
+## Offline sign-in packs (a device with no network)
+
+For your own device that must sign a person in for days without reaching Touchque (a laptop, a kiosk, a
+field tablet): your server asks for "the next N offline sign-ins" of that person on that device, and the
+device keeps them. Per slot it gets only a salt, a slow digest (PBKDF2-SHA256) and a QR sealed for the
+person's phone: nothing on the device can produce a code. Requires the workspace policies
+`offlineSignEnabled` and `offlineDevicePacksEnabled`.
+
+```go
+// Your server, right after a sign-in the person approved on the phone at that device itself:
+pack, err := tq.Offline.IssueDevicePack(touchque.OfflineDevicePackOptions{
+    ExternalUsername: "jane@acme.com",
+    Scope:            touchque.OfflineDeviceScope{ID: "pc-0f1e2d3c4b5a6978", Name: "LAPTOP-JANE"}, // one ID per device install
+    Account:          `ACME\jane`,                                                                // shown on the phone
+    Count:            10, ValidDays: 14,                                                           // the defaults
+})
+// Send the pack to the device. Offline, it shows the lowest unused slot's QR (slot.QR, or
+// slot.QRTerminal in a terminal); the person scans it with the Touchque app, approves and types
+// the 10-character code (XXXXX-XXXXX):
+if touchque.VerifyDeviceCode(pack.KDF, slot, typed) {
+    // signed in: drop this slot and every lower one, keep {Index, At} to report
+}
+
+// Back online:
+tq.Offline.ReportDevicePackUse(touchque.OfflineDeviceReportOptions{ScopeID: pack.Scope.ID, ExternalUsername: "jane@acme.com", Used: used})
+// A lost, stolen or reinstalled device:
+tq.Offline.RevokeDeviceScope(touchque.OfflineDeviceRevokeOptions{ScopeID: pack.Scope.ID, Reason: "lost"})
+```
+
+- Issue a pack only after a sign-in the person approved on the phone **at that device itself**, never for a
+  remote session.
+- Show the QR of the **lowest unused slot** and accept a code only for that slot; then drop it and every
+  lower one.
+- Lock after **5 wrong codes in 15 minutes**, refuse when the device's **clock went back** (keep the latest
+  time you have seen), and drop a pack's slots at its own `ValidUntil` (their QRs carry it: a newer pack does not
+  extend older slots).
+- Report the slots used when the device is back online, and **revoke a lost device**; a reinstalled device
+  gets a new scope ID. `NormalizeDeviceCode` and `FormatDeviceCode` ignore case, spaces and dashes.
 
 ## Webhooks
 
